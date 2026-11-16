@@ -69,6 +69,9 @@ class InterviewSession(Base):
     # Coding round (FR-30..FR-34)
     problem_id: Mapped[int | None] = mapped_column(ForeignKey("coding_problems.id", ondelete="SET NULL"))
     hints_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Personalisation (FR-52): weak topics from earlier sessions, snapshotted at start
+    focus_topics: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    panel: Mapped[bool] = mapped_column(default=False, server_default="0")  # FR-44: three interviewers
 
     user: Mapped[User | None] = relationship(back_populates="sessions")
     problem: Mapped["CodingProblem | None"] = relationship()
@@ -97,6 +100,7 @@ class Message(Base):
     topic: Mapped[str | None] = mapped_column(String(100))
     difficulty: Mapped[str | None] = mapped_column(String(10))
     about_cv: Mapped[bool] = mapped_column(default=False)  # interviewer asked about a CV project (FR-13)
+    persona: Mapped[str | None] = mapped_column(String(30))  # panel mode: which interviewer spoke
     quality: Mapped[str | None] = mapped_column(String(10))  # interviewer's quick read of a candidate answer
     text: Mapped[str] = mapped_column(Text)
     is_voice: Mapped[bool] = mapped_column(default=False)
@@ -140,7 +144,8 @@ class Report(Base):
     strengths: Mapped[list] = mapped_column(JSON, default=list)
     weaknesses: Mapped[list] = mapped_column(JSON, default=list)
     recommendation: Mapped[str] = mapped_column(Text, default="")
-    study_plan: Mapped[dict | None] = mapped_column(JSON)
+    study_plan: Mapped[dict | None] = mapped_column(JSON)  # FR-53, created on request
+    panel_verdict: Mapped[dict | None] = mapped_column(JSON)  # FR-44, panel sessions only
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     session: Mapped[InterviewSession] = relationship(back_populates="report")

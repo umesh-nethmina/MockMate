@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "r
 import { useNavigate } from "react-router-dom";
 import {
   getHealth,
+  getProgress,
   listCvs,
   startSession,
   uploadCv,
@@ -58,6 +59,16 @@ export default function SetupPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [codingAvailable, setCodingAvailable] = useState(true);
   const isCoding = sessionType === "coding";
+  const [focusWeak, setFocusWeak] = useState(true);
+  const [panel, setPanel] = useState(false);
+  const [weakTopics, setWeakTopics] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!user || user.is_guest) return;
+    getProgress()
+      .then((p) => setWeakTopics(p.weakest_topics.filter((t) => t.round !== "coding").map((t) => t.topic)))
+      .catch(() => setWeakTopics([]));
+  }, [user]);
 
   useEffect(() => {
     getHealth()
@@ -118,6 +129,8 @@ export default function SetupPage() {
         session_type: sessionType,
         personality,
         cv_id: cvId,
+        focus_weak_topics: focusWeak,
+        panel: panel && !isCoding,
       });
       navigate(`/interview/${turn.session_id}`);
     } catch (err) {
@@ -252,7 +265,7 @@ export default function SetupPage() {
               id="personality"
               value={personality}
               onChange={(e) => setPersonality(e.target.value as Personality)}
-              disabled={isCoding}
+              disabled={isCoding || panel}
             >
               {PERSONALITIES.map((p) => (
                 <option key={p.value} value={p.value}>
@@ -262,6 +275,31 @@ export default function SetupPage() {
             </select>
           </div>
         </div>
+
+        {!isCoding && (
+          <fieldset className="field options">
+            <legend>Options</legend>
+            <label className="check">
+              <input type="checkbox" checked={panel} onChange={(e) => setPanel(e.target.checked)} />
+              <span>
+                Panel interview
+                <small className="muted">
+                  {" "}
+                  - three interviewers (HR partner, tech lead, founder) take turns, then each votes hire or no hire
+                </small>
+              </span>
+            </label>
+            {weakTopics.length > 0 && (
+              <label className="check">
+                <input type="checkbox" checked={focusWeak} onChange={(e) => setFocusWeak(e.target.checked)} />
+                <span>
+                  Revisit my weak topics
+                  <small className="muted"> - {weakTopics.slice(0, 3).join(", ")}</small>
+                </span>
+              </label>
+            )}
+          </fieldset>
+        )}
 
         {error && (
           <p className="error" role="alert">

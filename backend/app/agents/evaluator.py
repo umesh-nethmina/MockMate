@@ -3,16 +3,18 @@ report summary (FR-41)."""
 
 import json
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.agents.context import InterviewContext, tag
+from app.agents.context import PANELISTS, InterviewContext, tag
 from app.config import get_settings
 from app.llm import LLM, LLMResult
 
 ANSWER_PROMPT = "evaluator.v3"
 CODE_PROMPT = "code_review.v1"
 REPORT_PROMPT = "report.v1"
+PANEL_PROMPT = "panel.v1"
 
 
 class StarFlags(BaseModel):
@@ -143,3 +145,52 @@ def summarize(llm: LLM, ctx: InterviewContext, items: list[ScoredItem]) -> LLMRe
         output_model=ReportSummary,
         effort=get_settings().report_effort,
     )
+
+
+# ---------- panel mode (FR-44) ----------
+
+PanelKey = Literal["friendly_hr", "strict_tech_lead", "fast_paced_founder"]
+HIRE_DECISIONS = ("strong_hire", "hire")
+
+
+class PanelistVerdict(BaseModel):
+    panelist: PanelKey
+    decision: Literal["strong_hire", "hire", "no_hire", "strong_no_hire"]
+    reason: str
+
+
+class PanelVerdicts(BaseModel):
+    verdicts: list[PanelistVerdict]
+    summary: str
+
+
+def panel_verdict(llm: LLM, ctx: InterviewContext, items: list[ScoredItem], overall: float) -> LLMResult[dict]:
+    """Each panelist votes from their own angle; the final decision is a plain majority, not the model's call."""
+    data = json.dumps([item.__dict__ for item in items], indent=1, ensure_ascii=False)
+    content = (
+        f"Target role: {ctx.role}\nLevel: {ctx.level}\nOverall score: {overall}/10\n"
+        f"Answers evaluated: {len(items)}\n\n{tag('evaluations', data)}"
+    )
+    result = llm.structured(
+        agent="report",
+        prompt=PANEL_PROMPT,
+        messages=[{"role": "user", "content": content}],
+        output_model=PanelVerdicts,
+        effort=get_settings().report_effort,
+    )
+    seen: dict[str, PanelistVerdict] = {}
+    for v in result.output.verdicts:
+        seen.setdefault(v.panelist, v)  # one vote per panelist
+    votes = [
+        {"panelist": key, "name": PANELISTS[key], "decision": v.decision, "reason": v.reason}
+        for key in PANELISTS
+        if (v := seen.get(key)) is not None
+    ]
+    hires = sum(1 for v in votes if v["decision"] in HIRE_DECISIONS)
+    verdict = {
+        "panelists": votes,
+        "decision": "hire" if votes and hires * 2 > len(votes) else "no_hire",
+        "votes_for_hire": hires,
+        "summary": result.output.summary,
+    }
+    return LLMResult(verdict, result.usage)

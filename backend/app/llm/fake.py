@@ -23,8 +23,16 @@ class FakeLLM:
         self.n = 0
 
     def structured(self, *, agent, prompt, messages, output_model, effort, max_tokens=8000):
-        from app.agents.evaluator import AnswerScore, CodeReview, ReportSummary, StarFlags
+        from app.agents.evaluator import (
+            AnswerScore,
+            CodeReview,
+            PanelistVerdict,
+            PanelVerdicts,
+            ReportSummary,
+            StarFlags,
+        )
         from app.agents.interviewer import InterviewerTurn
+        from app.agents.study_plan import StudyItem, StudyPlan
 
         self.calls.append({"agent": agent, "prompt": prompt, "messages": messages, "effort": effort})
         usage = LLMUsage(agent=agent, prompt=prompt, model="fake", input_tokens=100, output_tokens=50,
@@ -48,6 +56,27 @@ class FakeLLM:
             out = ReportSummary(strengths=["s"], weaknesses=["w"], summary="Summary.")
         elif output_model is CodeReview:
             out = CodeReview(code_quality=7, efficiency=6, feedback="Readable code.", model_answer="Use a hash map.")
+        elif output_model is PanelVerdicts:
+            out = PanelVerdicts(
+                verdicts=[
+                    PanelistVerdict(panelist="friendly_hr", decision="hire", reason="Clear stories."),
+                    PanelistVerdict(panelist="strict_tech_lead", decision="no_hire", reason="Shallow on testing."),
+                    PanelistVerdict(panelist="fast_paced_founder", decision="hire", reason="Shows ownership."),
+                ],
+                summary="Split panel.",
+            )
+        elif output_model is StudyPlan:
+            topics = [t for t in str(messages[-1]["content"]).split('"topic": "')[1:]] or ["General"]
+            out = StudyPlan(
+                summary="Focus on your weakest topics.",
+                items=[
+                    StudyItem(topic=t.split('"')[0], priority="high", why="It scored lowest.",
+                              actions=["Read the docs.", "Practise out loud."], practice_question="Explain it.",
+                              hours=3)
+                    for t in topics[:3]
+                ],
+                next_session="A technical interview at the same level.",
+            )
         else:  # pragma: no cover
             raise AssertionError(output_model)
         return LLMResult(out, usage)
@@ -60,7 +89,7 @@ class DemoLLM(FakeLLM):
     """FakeLLM with readable text, for clicking through the UI locally."""
 
     def structured(self, *, agent, prompt, messages, output_model, effort, max_tokens=8000):
-        from app.agents.evaluator import AnswerScore, CodeReview, ReportSummary
+        from app.agents.evaluator import AnswerScore, CodeReview, PanelVerdicts, ReportSummary
         from app.agents.interviewer import InterviewerTurn
 
         result = super().structured(agent=agent, prompt=prompt, messages=messages, output_model=output_model,
@@ -80,6 +109,10 @@ class DemoLLM(FakeLLM):
             out.correctness, out.clarity, out.depth = base, min(10, base + 1), max(1, base - 1)
             out.feedback = "(Demo mode) You answered the question; adding a concrete example would make it stronger."
             out.model_answer = "(Demo mode) A strong answer would state the situation, what you did, and the result."
+        elif isinstance(out, PanelVerdicts):
+            for v in out.verdicts:
+                v.reason = f"(Demo mode) {v.reason}"
+            out.summary = "(Demo mode) Placeholder panel verdict. Set ANTHROPIC_API_KEY for a real one."
         elif isinstance(out, CodeReview):
             out.feedback = "(Demo mode) Your code is readable; check the complexity and the edge cases."
             out.model_answer = "(Demo mode) Set ANTHROPIC_API_KEY to get a real review and an optimal solution."

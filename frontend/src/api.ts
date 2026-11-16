@@ -56,6 +56,7 @@ export type Message = {
   kind: "question" | "follow_up" | "redirect" | "closing" | "hint" | "answer" | "off_topic" | "code";
   round: string;
   topic: string | null;
+  persona: Personality | null;
   text: string;
   created_at: string;
 };
@@ -81,6 +82,8 @@ export type SessionState = {
   question_limit: number;
   started_at: string;
   has_report: boolean;
+  panel: boolean;
+  focus_topics: string[];
   messages: Message[];
 };
 
@@ -143,9 +146,41 @@ export type Report = {
   summary: string;
   questions: QuestionResult[];
   delivery: Delivery | null;
+  panel_verdict: PanelVerdict | null;
+  study_plan: StudyPlan | null;
   total_tokens: number;
   cost_usd: number;
   created_at: string;
+};
+
+export type HireDecision = "strong_hire" | "hire" | "no_hire" | "strong_no_hire";
+export type PanelVerdict = {
+  panelists: { panelist: Personality; name: string; decision: HireDecision; reason: string }[];
+  decision: "hire" | "no_hire";
+  votes_for_hire: number;
+  summary: string;
+};
+export type StudyItem = {
+  topic: string;
+  priority: "high" | "medium" | "low";
+  why: string;
+  actions: string[];
+  practice_question: string;
+  hours: number;
+};
+export type StudyPlan = { summary: string; items: StudyItem[]; next_session: string };
+
+export type TopicStat = { topic: string; round: string; answers: number; average: number; last_seen: string };
+export type Progress = {
+  sessions_completed: number;
+  answers_scored: number;
+  average_score: number | null;
+  recent_average: number | null;
+  previous_average: number | null;
+  trend: { session_id: string; date: string; role: string; session_type: SessionType; score: number }[];
+  dimensions: { correctness: number | null; clarity: number | null; depth: number | null };
+  weakest_topics: TopicStat[];
+  strongest_topics: TopicStat[];
 };
 
 export type CodeLanguage = "python" | "javascript";
@@ -243,6 +278,8 @@ export type StartRequest = {
   session_type: SessionType;
   personality: Personality;
   cv_id: number | null;
+  focus_weak_topics: boolean;
+  panel: boolean;
 };
 
 // ---------- endpoints ----------
@@ -258,6 +295,7 @@ export const getMe = () => api<User>("/users/me");
 export const deleteAccount = (password: string) =>
   api<void>("/users/me", { method: "DELETE", body: json({ password }) });
 export const mySessions = () => api<SessionSummary[]>("/users/me/sessions");
+export const getProgress = () => api<Progress>("/users/me/progress");
 
 export const uploadCv = (file: File) => {
   const form = new FormData();
@@ -282,6 +320,7 @@ export const sendAnswer = (id: string, text: string, voice?: VoiceInfo) =>
   });
 export const endSession = (id: string) => api<Report>(`/sessions/${id}/end`, { method: "POST" });
 export const getReport = (id: string) => api<Report>(`/sessions/${id}/report`);
+export const createStudyPlan = (id: string) => api<Report>(`/sessions/${id}/study-plan`, { method: "POST" });
 export const deleteSession = (id: string) => api<void>(`/sessions/${id}`, { method: "DELETE" });
 
 export const getUsage = (days = 7) => api<Usage>(`/admin/usage?days=${days}`);

@@ -10,7 +10,7 @@ from app.agents.context import InterviewContext
 from app.config import get_settings
 from app.llm import LLM, LLMResult
 
-PROMPT = "interviewer.v2"
+PROMPT = "interviewer.v3"
 MAX_FOLLOW_UPS_PER_TOPIC = 2
 
 Round = Literal["hr", "technical"]
@@ -49,6 +49,10 @@ class TurnPlan:
     round_changed: bool = False
     cv_due: CvDue = "no_cv"
     previous_quality: str | None = None  # your judgement of the answer before the latest one
+    focus_topic: str | None = None  # FR-52: a weak topic from earlier sessions to test next
+    # Panel mode (FR-44): who speaks for a follow-up (current panelist) and for a new topic
+    follow_up_speaker: str | None = None
+    new_topic_speaker: str | None = None
 
 
 def status_note(plan: TurnPlan) -> str:
@@ -73,6 +77,19 @@ def status_note(plan: TurnPlan) -> str:
         parts.append("You have not yet asked about a project from the CV: do so within the next two new questions.")
     elif plan.cv_due == "now":
         parts.append("Your next new question (not a follow-up) must be about a specific project named in the CV.")
+    if plan.focus_topic and plan.cv_due != "now":  # a due CV question goes first (FR-13)
+        parts.append(
+            f'Weak topic from the candidate\'s earlier sessions: "{plan.focus_topic}". Your next new question '
+            f'(not a follow-up) must test it; set `topic` to exactly "{plan.focus_topic}".'
+        )
+    if plan.new_topic_speaker:
+        if plan.questions_asked and plan.follow_up_speaker:
+            parts.append(
+                f"Panel: a follow-up or redirect is spoken by {plan.follow_up_speaker}; "
+                f"a new topic is spoken by {plan.new_topic_speaker}. Use that panelist's style."
+            )
+        else:
+            parts.append(f"Panel: this message is spoken by {plan.new_topic_speaker}. Use that panelist's style.")
     if plan.questions_asked == plan.question_limit - 1:
         parts.append("Your next question is the final question of the interview.")
     return " ".join(parts)

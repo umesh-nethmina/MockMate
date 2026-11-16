@@ -6,12 +6,14 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import coding, orchestrator
+from app import coding, orchestrator, progress
+from app.agents import study_plan
+from app.agents.evaluator import ScoredItem
 from app.api.auth import purge_expired_guests
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_db
-from app.llm import LLM, get_llm
+from app.llm import LLM, LLMError, get_llm
 from app.models import CV, InterviewSession, User
 from app.tools.sandbox import Sandbox, get_sandbox
 from app.tools.speech_metrics import pace_label, word_count
@@ -32,6 +34,8 @@ class StartSessionRequest(BaseModel):
     session_type: Literal["full", "hr", "technical", "coding"] = "full"  # FR-07
     personality: Literal["friendly_hr", "strict_tech_lead", "fast_paced_founder"] = "friendly_hr"  # FR-08
     question_limit: int | None = Field(default=None, ge=1, le=20)  # FR-14
+    focus_weak_topics: bool = True  # FR-52: revisit weak topics from earlier sessions
+    panel: bool = False  # FR-44: three interviewers and a hire / no-hire verdict
 
 
 class AnswerRequest(BaseModel):
@@ -50,6 +54,7 @@ class MessageOut(BaseModel):
     kind: str
     round: str
     topic: str | None
+    persona: str | None = None
     text: str
     created_at: datetime
 
@@ -75,6 +80,8 @@ class SessionOut(BaseModel):
     question_limit: int
     started_at: datetime
     has_report: bool
+    panel: bool
+    focus_topics: list[str]
     messages: list[MessageOut]
 
 
@@ -125,6 +132,8 @@ class ReportOut(BaseModel):
     summary: str
     questions: list[QuestionResult]
     delivery: DeliverySummary | None
+    panel_verdict: dict | None
+    study_plan: dict | None
     total_tokens: int
     cost_usd: float
     created_at: datetime
@@ -204,6 +213,8 @@ def _report_out(session: InterviewSession) -> ReportOut:
         summary=report.recommendation,
         questions=questions,
         delivery=_delivery(questions),
+        panel_verdict=report.panel_verdict,
+        study_plan=report.study_plan,
         total_tokens=session.total_tokens,
         cost_usd=round(session.cost_usd, 4),
         created_at=report.created_at,
@@ -297,6 +308,8 @@ def start_session(
         personality=body.personality,
         cv_id=body.cv_id,
         cv_text=cv_text,
+        focus_topics=progress.focus_topics_for(db, user.id, body.session_type) if body.focus_weak_topics else [],
+        panel=body.panel,
     )
     return _turn(session, first, done=False)
 
@@ -316,6 +329,8 @@ def get_session(s: InterviewSession = Depends(get_owned_session)) -> SessionOut:
         question_limit=s.question_limit,
         started_at=s.started_at,
         has_report=s.report is not None,
+        panel=s.panel,
+        focus_topics=[f["topic"] for f in s.focus_topics or []],
         messages=[MessageOut.model_validate(m) for m in s.messages],
     )
 
@@ -351,6 +366,40 @@ def end_session(
 def get_report(session: InterviewSession = Depends(get_owned_session)) -> ReportOut:
     if session.report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not ready - end the session first")
+    return _report_out(session)
+
+
+@router.post("/{session_id}/study-plan")
+def create_study_plan(
+    session: InterviewSession = Depends(get_owned_session),
+    db: Session = Depends(get_db),
+    llm: LLM = Depends(get_llm),
+) -> ReportOut:
+    """FR-53: a study plan from this report plus the candidate's weak-topic history. Made once, then kept."""
+    report = session.report
+    if report is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Finish the interview first - the plan is based on its report.")
+    if report.study_plan is None:
+        if not session.evaluations:
+            raise HTTPException(status.HTTP_409_CONFLICT, "There are no scored answers to build a plan from.")
+        check_daily_cap(db)
+        by_id = {m.id: m for m in session.messages}
+        items = [
+            ScoredItem(e.topic or "", by_id[e.message_id].round, e.correctness, e.clarity, e.depth, e.feedback)
+            for e in session.evaluations
+        ]
+        history = [
+            {"topic": t.topic, "round": t.round, "average": t.average, "answers": t.answers}
+            for t in progress.weak_topics(progress.topic_stats(db, session.user_id))
+        ]
+        try:
+            result = study_plan.create(llm, orchestrator.context_of(session), items, history)
+        except LLMError as err:
+            orchestrator._record_failure(db, session.id, err)
+            raise
+        orchestrator.record_usage(db, session.id, result.usage)
+        report.study_plan = result.output.model_dump()
+        db.commit()
     return _report_out(session)
 
 

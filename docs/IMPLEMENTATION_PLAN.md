@@ -69,10 +69,12 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - Notes: the harness runs inside the container with the hidden expected values, so a determined candidate could read them via introspection; acceptable for practice, not for hiring. Docker compose disables the coding round (no Docker socket in the container). **Deploy (Phase 6): Render web services can't start containers, so the sandbox needs its own host (small VM with Docker behind a runner API) or a hosted code-execution service.**
 
 ## Phase 5 – Progress (Weeks 6–7)
-- [ ] Progress endpoint + dashboard: score trend, 5 weakest topics (FR-51)
-- [ ] Weak-topic weighting in new sessions (FR-52)
-- [ ] Study-plan agent (FR-53); panel mode hire/no-hire (FR-44)
-- **Exit:** second session favours weak topics
+- [x] `GET /users/me/progress` + dashboard: headline tiles, score trend (line chart with tooltips and a table view), 5 weakest topics, score per dimension, strongest topics (FR-51)
+- [x] Weak-topic weighting (FR-52): up to 2 weakest topics (avg < 6.5 over the last 10 sessions, matching the session's rounds) snapshotted at start; the orchestrator tells the interviewer to test the next uncovered one on new-topic questions (a due CV question goes first). Opt-out checkbox on setup. Prompt `interviewer.v3`
+- [x] Study-plan agent (FR-53, `study_plan.v1`): on request from the report, built from the report plus weak-topic history, saved on the report; no URLs to avoid invented links
+- [x] Panel mode (FR-44): three fictional panelists; HR questions go to the HR partner, technical topics alternate tech lead / founder, follow-ups stay with the asker (orchestrator rule). Each panelist votes (`panel.v1`); the final hire / no-hire is a computed majority
+- **Exit:** second session favours weak topics — done (`tests/test_progress.py::test_second_session_favours_weak_topics`, plus a live demo run)
+- Notes: topics are free-text labels from the interviewer, matched loosely (word stems, order, plurals); very different wordings of the same subject still count as separate topics. Panel mode adds one Claude call per session; the study plan adds one when requested.
 
 ## Phase 6 – Release (Week 8)
 - [ ] 30-answer eval set for evaluator (±1 on 80%) and follow-up relevance review

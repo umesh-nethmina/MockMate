@@ -6,6 +6,7 @@ from pydantic import BaseModel, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app import progress
 from app.api.auth import UserOut, user_out
 from app.auth import get_current_user, verify_password
 from app.db import get_db
@@ -24,6 +25,34 @@ class SessionSummary(BaseModel):
     question_limit: int
     overall_score: float | None
     started_at: datetime
+
+
+class TopicOut(BaseModel):
+    topic: str
+    round: str
+    answers: int
+    average: float
+    last_seen: datetime
+
+
+class TrendPoint(BaseModel):
+    session_id: str
+    date: datetime
+    role: str
+    session_type: str
+    score: float
+
+
+class ProgressOut(BaseModel):
+    sessions_completed: int
+    answers_scored: int
+    average_score: float | None
+    recent_average: float | None  # last 5 sessions
+    previous_average: float | None  # the 5 before those
+    trend: list[TrendPoint]
+    dimensions: dict[str, float | None]
+    weakest_topics: list[TopicOut]
+    strongest_topics: list[TopicOut]
 
 
 class DeleteAccountRequest(BaseModel):
@@ -58,6 +87,12 @@ def my_sessions(user: User = Depends(get_current_user), db: Session = Depends(ge
         )
         for s in rows
     ]
+
+
+@router.get("/progress")
+def my_progress(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ProgressOut:
+    """FR-51: score trend, weakest topics and per-dimension averages across the user's sessions."""
+    return ProgressOut(**progress.progress(db, user.id))
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

@@ -5,6 +5,7 @@ import AdminPage from "./pages/AdminPage";
 import HistoryPage from "./pages/HistoryPage";
 import InterviewPage from "./pages/InterviewPage";
 import LoginPage from "./pages/LoginPage";
+import ProgressPage from "./pages/ProgressPage";
 import ReportPage from "./pages/ReportPage";
 import SetupPage from "./pages/SetupPage";
 
@@ -21,6 +22,7 @@ function Header() {
           <NavLink to="/" end>
             New interview
           </NavLink>
+          {!user.is_guest && <NavLink to="/progress">Progress</NavLink>}
           {!user.is_guest && <NavLink to="/history">My interviews</NavLink>}
           {user.is_admin && <NavLink to="/admin">Admin</NavLink>}
           <NavLink to="/account">{user.is_guest ? "Guest" : "Account"}</NavLink>
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/" element={guard(<SetupPage />)} />
           <Route path="/interview/:id" element={guard(<InterviewPage />)} />
           <Route path="/report/:id" element={guard(<ReportPage />)} />
+          <Route path="/progress" element={guard(<ProgressPage />)} />
           <Route path="/history" element={guard(<HistoryPage />)} />
           <Route path="/account" element={guard(<AccountPage />)} />
           <Route path="/admin" element={guard(<AdminPage />, true)} />

@@ -8,6 +8,8 @@ const CodingWorkspace = lazy(() => import("./CodingWorkspace"));
 
 type Mode = "text" | "voice";
 
+const PANELISTS = { friendly_hr: "Priya · HR", strict_tech_lead: "Marcus · Tech lead", fast_paced_founder: "Sam · Founder" };
+
 const join = (a: string, b: string) => [a.trim(), b.trim()].filter(Boolean).join(" ");
 
 export default function InterviewPage() {
@@ -131,6 +133,7 @@ export default function InterviewPage() {
       kind: "answer",
       round: "",
       topic: null,
+      persona: null,
       text,
       created_at: new Date().toISOString(),
     };
@@ -214,7 +217,7 @@ export default function InterviewPage() {
         {session.messages.map((m) => (
           <li key={m.id} className={`bubble ${m.speaker} ${m.kind === "hint" ? "hint" : ""}`}>
             <span className="who">
-              {m.speaker === "interviewer" ? "Interviewer" : "You"}
+              {m.speaker === "interviewer" ? (m.persona && session.panel ? PANELISTS[m.persona] : "Interviewer") : "You"}
               {m.speaker === "interviewer" && tts.supported && (
                 <button
                   type="button"

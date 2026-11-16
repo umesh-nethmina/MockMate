@@ -3,7 +3,7 @@
 AI mock-interview web app. Spec: SRS v1.0 (FR-/NFR- IDs). Build plan and progress: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
 ## Layout
-- `backend/` FastAPI (Python 3.11+). `app/api` routes, `app/agents` Claude agents, `app/tools` CV parser / code sandbox (+ in-container `harness/`) / speech metrics, `app/coding.py` coding-round logic, `app/data/problems.json` starter problem bank, `app/llm` Claude client wrapper, `app/prompts` versioned prompt files.
+- `backend/` FastAPI (Python 3.11+). `app/api` routes, `app/agents` Claude agents, `app/tools` CV parser / code sandbox (+ in-container `harness/`) / speech metrics, `app/coding.py` coding-round logic, `app/progress.py` progress and weak-topic rules, `app/data/problems.json` starter problem bank, `app/llm` Claude client wrapper, `app/prompts` versioned prompt files.
 - `frontend/` Vite + React + TypeScript.
 
 ## Commands

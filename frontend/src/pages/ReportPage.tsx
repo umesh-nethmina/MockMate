@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getReport, type Delivery, type Report } from "../api";
+import { createStudyPlan, getReport, type Delivery, type PanelVerdict, type Report, type StudyPlan } from "../api";
 
 function scoreClass(score: number) {
   if (score >= 7) return "good";
@@ -56,10 +56,90 @@ function DeliveryCard({ d }: { d: Delivery }) {
   );
 }
 
+const DECISION = { strong_hire: "Strong hire", hire: "Hire", no_hire: "No hire", strong_no_hire: "Strong no hire" };
+
+function PanelCard({ v }: { v: PanelVerdict }) {
+  const hire = v.decision === "hire";
+  return (
+    <section className="card">
+      <div className="row spread">
+        <h2 className="h3">Panel decision</h2>
+        <span className={`pill ${hire ? "good" : "low"}`}>
+          {hire ? "✓ Hire" : "✗ No hire"} · {v.votes_for_hire} of {v.panelists.length} votes
+        </span>
+      </div>
+      <ul className="panel-votes">
+        {v.panelists.map((p) => {
+          const yes = p.decision === "hire" || p.decision === "strong_hire";
+          return (
+            <li key={p.panelist}>
+              <div className="row spread">
+                <strong>{p.name}</strong>
+                <span className={`chip ${yes ? "yes" : "no"}`}>
+                  {yes ? "✓" : "✗"} {DECISION[p.decision]}
+                </span>
+              </div>
+              <p className="small">{p.reason}</p>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="muted small">{v.summary} The decision is a simple majority of the three votes.</p>
+    </section>
+  );
+}
+
+function StudyPlanCard({ plan }: { plan: StudyPlan }) {
+  return (
+    <section className="card">
+      <h2 className="h3">Your study plan</h2>
+      <p>{plan.summary}</p>
+      <ol className="plan">
+        {plan.items.map((item, i) => (
+          <li key={i}>
+            <div className="row spread">
+              <strong>{item.topic}</strong>
+              <span className="muted small">
+                <span className={`priority ${item.priority}`}>{item.priority} priority</span> · about {item.hours} h
+              </span>
+            </div>
+            <p className="small">{item.why}</p>
+            <ul className="small">
+              {item.actions.map((a, j) => (
+                <li key={j}>{a}</li>
+              ))}
+            </ul>
+            <p className="small">
+              <span className="muted">Practise answering:</span> “{item.practice_question}”
+            </p>
+          </li>
+        ))}
+      </ol>
+      <p className="small">
+        <strong>Next mock interview:</strong> {plan.next_session}
+      </p>
+    </section>
+  );
+}
+
 export default function ReportPage() {
   const { id = "" } = useParams();
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  async function makePlan() {
+    setPlanBusy(true);
+    setPlanError(null);
+    try {
+      setReport(await createStudyPlan(id));
+    } catch (e) {
+      setPlanError((e as Error).message);
+    } finally {
+      setPlanBusy(false);
+    }
+  }
 
   useEffect(() => {
     getReport(id)
@@ -114,6 +194,24 @@ export default function ReportPage() {
               </ul>
             </section>
           </div>
+
+          {report.panel_verdict && <PanelCard v={report.panel_verdict} />}
+
+          {report.study_plan ? (
+            <StudyPlanCard plan={report.study_plan} />
+          ) : (
+            <section className="card row spread">
+              <span>Get a short, personal study plan built from this report and your earlier interviews.</span>
+              <button type="button" onClick={() => void makePlan()} disabled={planBusy}>
+                {planBusy ? "Writing your plan…" : "Create my study plan"}
+              </button>
+              {planError && (
+                <p className="error" role="alert">
+                  {planError}
+                </p>
+              )}
+            </section>
+          )}
 
           {report.delivery && report.delivery.voice_answers > 0 && <DeliveryCard d={report.delivery} />}
 

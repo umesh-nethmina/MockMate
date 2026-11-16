@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app import coding
 from app import db as database
 from app.agents import evaluator, interviewer
-from app.agents.context import InterviewContext
+from app.agents.context import PANELISTS, InterviewContext
 from app.agents.evaluator import AnswerScore, ScoredItem
 from app.agents.interviewer import (
     MAX_FOLLOW_UPS_PER_TOPIC,
@@ -28,6 +28,7 @@ from app.agents.interviewer import (
 )
 from app.llm import LLM, LLMError, LLMResult, LLMUsage
 from app.models import Evaluation, InterviewSession, LlmCall, Message, Report
+from app.progress import same_topic
 from app.tools import speech_metrics
 
 log = logging.getLogger(__name__)
@@ -98,6 +99,31 @@ def cv_due(session: InterviewSession, messages: list[Message], next_number: int)
     return "soon"
 
 
+def focus_due(session: InterviewSession, messages: list[Message], next_round: str) -> str | None:
+    """FR-52: the first weak topic for this round that has not been asked about yet in this session."""
+    asked = [m.topic for m in messages if m.speaker == "interviewer" and m.topic]
+    for focus in session.focus_topics or []:
+        if focus.get("round") == next_round and not any(same_topic(focus["topic"], t) for t in asked):
+            return focus["topic"]
+    return None
+
+
+def panel_speakers(
+    session: InterviewSession, messages: list[Message], next_round: str
+) -> tuple[str | None, str | None]:
+    """FR-44: (follow-up speaker, new-topic speaker). HR questions go to the HR partner; technical topics
+    alternate between the tech lead and the founder; a follow-up stays with whoever asked the question."""
+    if not session.panel:
+        return None, None
+    current = next((m.persona for m in reversed(messages) if m.speaker == "interviewer" and m.persona), None)
+    if next_round == "hr":
+        new = "friendly_hr"
+    else:
+        technical_topics = sum(1 for m in messages if m.kind == "question" and m.round == "technical")
+        new = "strict_tech_lead" if technical_topics % 2 == 0 else "fast_paced_founder"
+    return current, new
+
+
 def plan_next(session: InterviewSession, messages: list[Message]) -> TurnPlan:
     number = session.questions_asked + 1
     next_round = round_for(session.session_type, session.question_limit, number)
@@ -105,6 +131,8 @@ def plan_next(session: InterviewSession, messages: list[Message]) -> TurnPlan:
     round_changed = last_q is not None and last_q.round != next_round
     follow_ups = follow_ups_on_current_topic(messages)
     answers = [m for m in messages if m.kind == "answer"]
+    cv = cv_due(session, messages, number)
+    follow_speaker, new_speaker = panel_speakers(session, messages, next_round)
     return TurnPlan(
         questions_asked=session.questions_asked,
         question_limit=session.question_limit,
@@ -113,8 +141,11 @@ def plan_next(session: InterviewSession, messages: list[Message]) -> TurnPlan:
         follow_ups_on_topic=follow_ups,
         follow_up_allowed=not round_changed and follow_ups < MAX_FOLLOW_UPS_PER_TOPIC,
         round_changed=round_changed,
-        cv_due=cv_due(session, messages, number),
+        cv_due=cv,
         previous_quality=answers[-1].quality if answers else None,
+        focus_topic=focus_due(session, messages, next_round),
+        follow_up_speaker=PANELISTS.get(follow_speaker or ""),
+        new_topic_speaker=PANELISTS.get(new_speaker or ""),
     )
 
 
@@ -128,6 +159,7 @@ def context_of(session: InterviewSession) -> InterviewContext:
         cv_text=session.cv_text,
         personality=session.personality,
         session_type=session.session_type,
+        panel=session.panel,
     )
 
 
@@ -162,8 +194,15 @@ def _record_failure(db: Session, session_id: str | None, err: LLMError) -> None:
     db.commit()
 
 
+def _persona_for(turn: InterviewerTurn, plan: TurnPlan) -> str | None:
+    follow_up = turn.decision != "next_topic" and plan.follow_up_speaker
+    name = plan.follow_up_speaker if follow_up else plan.new_topic_speaker
+    return next((key for key, label in PANELISTS.items() if label == name), None)
+
+
 def _interviewer_message(turn: InterviewerTurn, plan: TurnPlan, has_cv: bool) -> Message:
     return Message(
+        persona=_persona_for(turn, plan),
         speaker="interviewer",
         kind=INTERVIEWER_KINDS[turn.decision],
         round=plan.round,
@@ -198,6 +237,8 @@ def start_session(
     personality: str = "friendly_hr",
     cv_id: int | None = None,
     cv_text: str = "",
+    focus_topics: list[dict] | None = None,
+    panel: bool = False,
 ) -> tuple[InterviewSession, Message]:
     session = InterviewSession(
         user_id=user_id,
@@ -211,6 +252,8 @@ def start_session(
         cv_text=cv_text,
         difficulty="medium",
         questions_asked=0,
+        focus_topics=focus_topics or [],
+        panel=panel,
     )
     plan = plan_next(session, [])
     try:
@@ -417,6 +460,14 @@ def end_session(db: Session, llm: LLM, session: InterviewSession) -> Report:
             weaknesses=result.output.weaknesses,
             recommendation=result.output.summary,
         )
+        if session.panel:  # FR-44: each panelist's hire / no-hire, majority decides
+            try:
+                verdict = evaluator.panel_verdict(llm, ctx, items, overall)
+            except LLMError as err:
+                _record_failure(db, session.id, err)
+                raise
+            record_usage(db, session.id, verdict.usage)
+            report.panel_verdict = verdict.output
 
     db.add(report)
     db.commit()
