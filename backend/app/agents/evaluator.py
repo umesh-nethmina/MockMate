@@ -54,12 +54,13 @@ class ScoredItem:
 
 
 def score_answer(
-    llm: LLM, ctx: InterviewContext, question: str, answer: str, round: str = "technical"
+    llm: LLM, ctx: InterviewContext, question: str, answer: str, round: str = "technical", spoken: bool = False
 ) -> LLMResult[AnswerScore]:
+    mode = "spoken (speech-to-text transcript)" if spoken else "typed"
     content = "\n\n".join(
         [
             ctx.as_prompt(include_style=False, include_cv=False),
-            f"Round: {round}",
+            f"Round: {round}\nAnswer mode: {mode}",
             tag("question", question),
             tag("candidate_answer", answer),
         ]

@@ -93,8 +93,10 @@ class Message(Base):
     quality: Mapped[str | None] = mapped_column(String(10))  # interviewer's quick read of a candidate answer
     text: Mapped[str] = mapped_column(Text)
     is_voice: Mapped[bool] = mapped_column(default=False)
+    speech_seconds: Mapped[float | None] = mapped_column(Float)
     wpm: Mapped[float | None] = mapped_column(Float)
     filler_count: Mapped[int | None] = mapped_column(Integer)
+    filler_words: Mapped[dict | None] = mapped_column(JSON)  # e.g. {"um": 3, "like": 2} (FR-43)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     session: Mapped[InterviewSession] = relationship(back_populates="messages")

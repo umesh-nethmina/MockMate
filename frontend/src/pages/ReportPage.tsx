@@ -1,11 +1,57 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getReport, type Report } from "../api";
+import { getReport, type Delivery, type Report } from "../api";
 
 function scoreClass(score: number) {
   if (score >= 7) return "good";
   if (score >= 5) return "ok";
   return "low";
+}
+
+const PACE = { slow: "a bit slow", good: "good pace", fast: "a bit fast" } as const;
+const PACE_TIP = {
+  slow: "Try to keep momentum: plan the first sentence, then keep going.",
+  good: "A clear, comfortable pace - keep it up.",
+  fast: "Slow down a little and pause between points so the interviewer can follow.",
+} as const;
+
+const fillerList = (words: Record<string, number>) =>
+  Object.entries(words)
+    .map(([w, n]) => `"${w}" ×${n}`)
+    .join(", ");
+
+function DeliveryCard({ d }: { d: Delivery }) {
+  return (
+    <section className="card">
+      <h2 className="h3">How you spoke</h2>
+      <dl className="metrics">
+        <div>
+          <dt>Speaking pace</dt>
+          <dd className={d.pace === "good" ? "good" : d.pace ? "ok" : ""}>
+            {d.avg_wpm !== null ? `${Math.round(d.avg_wpm)} wpm` : "-"}
+          </dd>
+          <small className="muted">{d.pace ? PACE[d.pace] : "not enough speech to measure"} · aim for 110-160</small>
+        </div>
+        <div>
+          <dt>Filler words</dt>
+          <dd className={d.total_fillers <= d.voice_answers ? "good" : "ok"}>{d.total_fillers}</dd>
+          <small className="muted">
+            {d.total_fillers ? `most used: ${fillerList(d.top_fillers)}` : "none detected"}
+          </small>
+        </div>
+        <div>
+          <dt>Answer length</dt>
+          <dd>{Math.round(d.avg_words_per_answer)}</dd>
+          <small className="muted">words per answer on average</small>
+        </div>
+      </dl>
+      {d.pace && <p className="small">{PACE_TIP[d.pace]}</p>}
+      <p className="muted small">
+        Based on {d.voice_answers} spoken answer{d.voice_answers === 1 ? "" : "s"}. Browsers often leave out "um" and
+        "uh" when transcribing, so the real filler count may be higher.
+      </p>
+    </section>
+  );
 }
 
 export default function ReportPage() {
@@ -67,6 +113,8 @@ export default function ReportPage() {
             </section>
           </div>
 
+          {report.delivery && report.delivery.voice_answers > 0 && <DeliveryCard d={report.delivery} />}
+
           <section className="card">
             <h2 className="h3">Score per question</h2>
             <ol className="bars">
@@ -117,7 +165,15 @@ export default function ReportPage() {
                     ))}
                   </div>
                 )}
-                <h3 className="h4">Your answer</h3>
+                <h3 className="h4">Your answer {q.is_voice && <span className="muted">(spoken)</span>}</h3>
+                {q.is_voice && (
+                  <p className="muted small">
+                    {q.word_count} words
+                    {q.wpm !== null && ` · ${Math.round(q.wpm)} words/min (${PACE[q.pace ?? "good"]})`}
+                    {` · ${q.filler_count ?? 0} filler${q.filler_count === 1 ? "" : "s"}`}
+                    {q.filler_words && Object.keys(q.filler_words).length > 0 && `: ${fillerList(q.filler_words)}`}
+                  </p>
+                )}
                 <p className="quote">{q.answer}</p>
                 <h3 className="h4">Feedback</h3>
                 <p>{q.feedback}</p>

@@ -110,6 +110,21 @@ export type QuestionResult = {
   star: Star | null;
   feedback: string;
   model_answer: string;
+  is_voice: boolean;
+  word_count: number;
+  wpm: number | null;
+  pace: "slow" | "good" | "fast" | null;
+  filler_count: number | null;
+  filler_words: Record<string, number> | null;
+};
+
+export type Delivery = {
+  voice_answers: number;
+  avg_wpm: number | null;
+  pace: "slow" | "good" | "fast" | null;
+  total_fillers: number;
+  top_fillers: Record<string, number>;
+  avg_words_per_answer: number;
 };
 
 export type Report = {
@@ -122,6 +137,7 @@ export type Report = {
   weaknesses: string[];
   summary: string;
   questions: QuestionResult[];
+  delivery: Delivery | null;
   total_tokens: number;
   cost_usd: number;
   created_at: string;
@@ -186,8 +202,17 @@ export const deleteCv = (id: number) => api<void>(`/cv/${id}`, { method: "DELETE
 
 export const startSession = (body: StartRequest) => api<Turn>("/sessions", { method: "POST", body: json(body) });
 export const getSession = (id: string) => api<SessionState>(`/sessions/${id}`);
-export const sendAnswer = (id: string, text: string) =>
-  api<Turn>(`/sessions/${id}/answer`, { method: "POST", body: json({ text }) });
+export type VoiceInfo = { transcript: string; seconds: number | null };
+
+export const sendAnswer = (id: string, text: string, voice?: VoiceInfo) =>
+  api<Turn>(`/sessions/${id}/answer`, {
+    method: "POST",
+    body: json(
+      voice
+        ? { text, is_voice: true, voice_transcript: voice.transcript.slice(0, 5000), speech_seconds: voice.seconds }
+        : { text },
+    ),
+  });
 export const endSession = (id: string) => api<Report>(`/sessions/${id}/end`, { method: "POST" });
 export const getReport = (id: string) => api<Report>(`/sessions/${id}/report`);
 export const deleteSession = (id: string) => api<void>(`/sessions/${id}`, { method: "DELETE" });

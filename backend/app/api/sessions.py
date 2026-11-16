@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.llm import LLM, get_llm
 from app.models import CV, InterviewSession, User
+from app.tools.speech_metrics import pace_label, word_count
 from app.usage import check_daily_cap
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -34,6 +35,10 @@ class StartSessionRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     text: Annotated[Text, StringConstraints(min_length=1, max_length=5000)]
+    # Voice answers (FR-20): raw transcript before the candidate's edits, and time spent speaking
+    is_voice: bool = False
+    voice_transcript: Annotated[str, StringConstraints(max_length=5000)] | None = None
+    speech_seconds: float | None = Field(default=None, gt=0, le=1800)
 
 
 class MessageOut(BaseModel):
@@ -84,6 +89,22 @@ class QuestionResult(BaseModel):
     star: dict[str, bool] | None
     feedback: str
     model_answer: str
+    # Delivery (FR-43); speech fields are null for typed answers
+    is_voice: bool
+    word_count: int
+    wpm: float | None
+    pace: str | None
+    filler_count: int | None
+    filler_words: dict[str, int] | None
+
+
+class DeliverySummary(BaseModel):
+    voice_answers: int
+    avg_wpm: float | None
+    pace: str | None
+    total_fillers: int
+    top_fillers: dict[str, int]
+    avg_words_per_answer: float
 
 
 class ReportOut(BaseModel):
@@ -96,6 +117,7 @@ class ReportOut(BaseModel):
     weaknesses: list[str]
     summary: str
     questions: list[QuestionResult]
+    delivery: DeliverySummary | None
     total_tokens: int
     cost_usd: float
     created_at: datetime
@@ -143,6 +165,12 @@ def _report_out(session: InterviewSession) -> ReportOut:
                 star=ev.star_flags,
                 feedback=ev.feedback,
                 model_answer=ev.model_answer,
+                is_voice=answer.is_voice,
+                word_count=word_count(answer.text),
+                wpm=answer.wpm,
+                pace=pace_label(answer.wpm),
+                filler_count=answer.filler_count,
+                filler_words=answer.filler_words,
             )
         )
     return ReportOut(
@@ -155,9 +183,31 @@ def _report_out(session: InterviewSession) -> ReportOut:
         weaknesses=report.weaknesses,
         summary=report.recommendation,
         questions=questions,
+        delivery=_delivery(questions),
         total_tokens=session.total_tokens,
         cost_usd=round(session.cost_usd, 4),
         created_at=report.created_at,
+    )
+
+
+def _delivery(questions: list[QuestionResult]) -> DeliverySummary | None:
+    if not questions:
+        return None
+    voice = [q for q in questions if q.is_voice]
+    rates = [q.wpm for q in voice if q.wpm is not None]
+    avg_wpm = round(sum(rates) / len(rates), 1) if rates else None
+    fillers: dict[str, int] = {}
+    for q in voice:
+        for word, n in (q.filler_words or {}).items():
+            fillers[word] = fillers.get(word, 0) + n
+    top = dict(sorted(fillers.items(), key=lambda kv: -kv[1])[:5])
+    return DeliverySummary(
+        voice_answers=len(voice),
+        avg_wpm=avg_wpm,
+        pace=pace_label(avg_wpm),
+        total_fillers=sum(fillers.values()),
+        top_fillers=top,
+        avg_words_per_answer=round(sum(q.word_count for q in questions) / len(questions), 1),
     )
 
 
@@ -233,7 +283,10 @@ def submit_answer(
     db: Session = Depends(get_db),
     llm: LLM = Depends(get_llm),
 ) -> TurnResponse:
-    reply, done, answer_id = orchestrator.submit_answer(db, llm, session, body.text)
+    voice = None
+    if body.is_voice:
+        voice = orchestrator.VoiceInput(transcript=body.voice_transcript or body.text, seconds=body.speech_seconds)
+    reply, done, answer_id = orchestrator.submit_answer(db, llm, session, body.text, voice)
     if answer_id is not None:
         background.add_task(orchestrator.evaluate_in_background, llm, session.id, answer_id)
     return _turn(session, reply, done)

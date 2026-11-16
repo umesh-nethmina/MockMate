@@ -4,6 +4,7 @@ after every turn (NFR-12). It never calls Claude itself."""
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -25,6 +26,7 @@ from app.agents.interviewer import (
 )
 from app.llm import LLM, LLMError, LLMResult, LLMUsage
 from app.models import Evaluation, InterviewSession, LlmCall, Message, Report
+from app.tools import speech_metrics
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,14 @@ CV_QUESTION_BY = 3  # FR-13: ask about a CV project no later than question 3
 
 class SessionStateError(Exception):
     """The request does not fit the session's current state (HTTP 409)."""
+
+
+@dataclass(frozen=True)
+class VoiceInput:
+    """A spoken answer: the raw speech-to-text transcript (before edits) and the speaking time."""
+
+    transcript: str
+    seconds: float | None
 
 
 # ---------- planning rules (pure functions, unit-tested) ----------
@@ -217,7 +227,20 @@ def start_session(
     return session, first
 
 
-def submit_answer(db: Session, llm: LLM, session: InterviewSession, text: str) -> tuple[Message, bool, int | None]:
+def _apply_voice(answer: Message, text: str, voice: VoiceInput | None) -> None:
+    if voice is None:
+        return
+    m = speech_metrics.analyse(voice.transcript or text, voice.seconds)
+    answer.is_voice = True
+    answer.speech_seconds = voice.seconds
+    answer.wpm = m.wpm
+    answer.filler_count = m.filler_count
+    answer.filler_words = m.filler_words
+
+
+def submit_answer(
+    db: Session, llm: LLM, session: InterviewSession, text: str, voice: VoiceInput | None = None
+) -> tuple[Message, bool, int | None]:
     """Store the answer and produce the next interviewer message.
 
     Returns (interviewer_message, interview_done, answer_id_to_evaluate). If Claude fails, nothing is
@@ -229,6 +252,7 @@ def submit_answer(db: Session, llm: LLM, session: InterviewSession, text: str) -
     history = list(session.messages)
     asked_last = next(m for m in reversed(history) if m.speaker == "interviewer")
     answer = Message(speaker="candidate", kind="answer", round=asked_last.round, topic=asked_last.topic, text=text)
+    _apply_voice(answer, text, voice)
 
     if session.questions_asked >= session.question_limit:
         session.messages.append(answer)
@@ -304,7 +328,9 @@ def evaluate_in_background(llm: LLM, session_id: str, answer_id: int) -> None:
             return
         question = question_for(session, answer)
         try:
-            result = evaluator.score_answer(llm, context_of(session), question.text, answer.text, answer.round)
+            result = evaluator.score_answer(
+                llm, context_of(session), question.text, answer.text, answer.round, spoken=answer.is_voice
+            )
         except LLMError as err:
             log.warning("background evaluation failed for message %s; will retry at end: %s", answer_id, err)
             _record_failure(db, session_id, err)
@@ -325,13 +351,15 @@ def end_session(db: Session, llm: LLM, session: InterviewSession) -> Report:
     ctx = context_of(session)
     answers = [m for m in session.messages if m.kind == "answer"]
     done_ids = {e.message_id for e in session.evaluations}
-    missing = [(a, question_for(session, a).text, a.text, a.round) for a in answers if a.id not in done_ids]
+    missing = [
+        (a, question_for(session, a).text, a.text, a.round, a.is_voice) for a in answers if a.id not in done_ids
+    ]
 
     if missing:
-        def work(item: tuple[Message, str, str, str]):
-            answer, question, text, rnd = item
+        def work(item: tuple[Message, str, str, str, bool]):
+            answer, question, text, rnd, spoken = item
             try:
-                return answer, evaluator.score_answer(llm, ctx, question, text, rnd)
+                return answer, evaluator.score_answer(llm, ctx, question, text, rnd, spoken=spoken)
             except LLMError as err:
                 return answer, err
 

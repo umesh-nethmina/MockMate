@@ -53,9 +53,11 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - **Exit:** CV-based question appears — verified in demo mode; confirm with real Claude once an API key is set
 
 ## Phase 3 – Voice (Week 4)
-- [ ] Web Speech API STT with editable transcript (FR-20, FR-23), TTS with mute (FR-21), voice/text toggle (FR-22)
-- [ ] Speech metrics tool: fillers, WPM, length (FR-43)
-- **Exit:** full interview by voice
+- [x] Web Speech API dictation into an editable answer box (FR-20, FR-23); auto-restart after pauses
+- [x] Questions read aloud with mute + per-message replay (FR-21); TTS stops when the mic starts
+- [x] Voice/text toggle at any time; text fallback when unsupported or mic blocked (FR-22, UC-01 4a)
+- [x] Speech metrics tool: fillers, WPM, answer length from the raw transcript (FR-43); "How you spoke" report card
+- **Exit:** full interview by voice — server side verified; needs a manual run in Chrome/Edge with a microphone
 
 ## Phase 4 – Coding (Week 5)
 - [ ] CodingProblem model + admin CRUD with reference-solution validation (FR-60, UC-05)
