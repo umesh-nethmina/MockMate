@@ -99,13 +99,17 @@ export default function InterviewPage() {
 
   const current = Math.min(session.questions_asked, session.question_limit);
   const active = !ended && !finishing;
+  const lastQuestion = [...session.messages].reverse().find((m) => m.speaker === "interviewer");
+  const roundLabel = lastQuestion?.round === "hr" ? "HR round" : "Technical round";
 
   return (
     <div className="interview">
       <div className="interview-head">
         <div>
           <h1 className="h2">{session.role}</h1>
-          <p className="muted small">{session.level} level</p>
+          <p className="muted small">
+            {session.level} level · {roundLabel}
+          </p>
         </div>
         <div className="progress-wrap" aria-label={`Question ${current} of ${session.question_limit}`}>
           <span className="small">

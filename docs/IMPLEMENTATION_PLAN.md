@@ -43,14 +43,14 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - **Exit:** one complete 8-question interview with report; cost per session logged
 
 ## Phase 2 – Personalisation (Week 3)
-- [ ] Auth: register/login, bcrypt, JWT 24 h (FR-01, NFR-05)
-- [ ] Persist sessions per user (FR-50); delete session/account (FR-54, UC-04)
-- [ ] CV upload → pypdf text, PDF deleted after extraction (FR-06, §6.1)
-- [ ] Session types & rounds (FR-07), personalities (FR-08), CV project question (FR-13), adaptive difficulty (FR-12)
-- [ ] STAR flags (FR-42)
-- [ ] Usage/cost logger table + daily cap (FR-61, FR-62)
-- [ ] Guest flow + 24 h cleanup (FR-02)
-- **Exit:** CV-based question appears
+- [x] Auth: register/login, bcrypt, JWT 24 h (FR-01, NFR-05); admins via `ADMIN_EMAILS`
+- [x] Persist sessions per user + history list (FR-50); delete session/account with password (FR-54, UC-04)
+- [x] CV upload → pypdf text in memory, PDF not stored (FR-06, §6.1)
+- [x] Session types with HR→technical rounds (FR-07), personalities (FR-08), CV project question by Q3 (FR-13), adaptive difficulty (FR-12)
+- [x] STAR flags (FR-42)
+- [x] Usage/cost logger + daily cap + admin usage page (FR-61, FR-62)
+- [x] Guest flow (one 5-question interview) + 24 h cleanup (FR-02)
+- **Exit:** CV-based question appears — verified in demo mode; confirm with real Claude once an API key is set
 
 ## Phase 3 – Voice (Week 4)
 - [ ] Web Speech API STT with editable transcript (FR-20, FR-23), TTS with mute (FR-21), voice/text toggle (FR-22)

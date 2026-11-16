@@ -90,7 +90,7 @@ export default function ReportPage() {
               <details key={i} className="card question">
                 <summary>
                   <span>
-                    Q{i + 1}. {q.question}
+                    <span className="round-tag">{q.round === "hr" ? "HR" : "Tech"}</span> Q{i + 1}. {q.question}
                   </span>
                   <span className={`pill ${scoreClass(q.average)}`}>{q.average.toFixed(1)}</span>
                 </summary>
@@ -108,6 +108,15 @@ export default function ReportPage() {
                     <dd>{q.depth}</dd>
                   </div>
                 </dl>
+                {q.star && (
+                  <div className="star" aria-label="STAR structure">
+                    {(["situation", "task", "action", "result"] as const).map((part) => (
+                      <span key={part} className={`chip ${q.star![part] ? "yes" : "no"}`}>
+                        {q.star![part] ? "✓" : "✗"} {part[0].toUpperCase() + part.slice(1)}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <h3 className="h4">Your answer</h3>
                 <p className="quote">{q.answer}</p>
                 <h3 className="h4">Feedback</h3>
