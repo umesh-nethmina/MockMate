@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     cv_max_bytes: int = 5 * 1024 * 1024  # FR-06
     cv_max_chars: int = 12_000  # keeps prompts small and limits injection surface (NFR-09)
 
+    # Code sandbox (FR-31, NFR-07): one throw-away Docker container per run
+    sandbox_enabled: bool = True
+    sandbox_python_image: str = "python:3.12-alpine"
+    sandbox_node_image: str = "node:22-alpine"
+    sandbox_cpu_seconds: int = 5  # total CPU time per run
+    sandbox_test_seconds: float = 2.0  # CPU time per test case
+    sandbox_memory_mb: int = 128
+    sandbox_pids_limit: int = 64
+    sandbox_wall_seconds: float = 20.0  # includes container start-up
+    sandbox_max_output_bytes: int = 256 * 1024
+    sandbox_max_concurrent: int = 4
+    sandbox_queue_seconds: float = 15.0
+    max_code_runs_per_session: int = 60
+
 
 DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-change-me"
 

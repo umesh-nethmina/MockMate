@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -8,12 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
-from app.api import admin, auth, cv, health, sessions, users
+from app.api import admin, auth, coding, cv, health, problems, sessions, users
 from app.api.auth import purge_expired_guests
+from app.coding import CodingStateError, RunLimitReached, seed_problems
 from app.config import get_settings
 from app.db import SessionLocal, run_migrations
 from app.llm import LLMError
 from app.orchestrator import SessionStateError
+from app.tools.sandbox import SandboxUnavailable, get_sandbox
 from app.usage import DailyCapReached
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,6 +27,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     run_migrations()
     with SessionLocal() as db:
         purge_expired_guests(db)
+        seed_problems(db)
+    if get_settings().sandbox_enabled:  # pull sandbox images in the background so start-up stays fast
+        threading.Thread(target=get_sandbox().prepare, daemon=True).start()  # type: ignore[attr-defined]
     yield
 
 
@@ -64,7 +70,21 @@ def create_app() -> FastAPI:
     async def cap_reached(_: Request, exc: DailyCapReached) -> JSONResponse:
         return JSONResponse(status_code=503, content={"error": exc.user_message})
 
-    for module in (health, auth, users, cv, sessions, admin):
+    @app.exception_handler(CodingStateError)
+    async def coding_state_error(_: Request, exc: CodingStateError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+
+    @app.exception_handler(SandboxUnavailable)
+    async def sandbox_unavailable(_: Request, exc: SandboxUnavailable) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"error": exc.user_message})
+
+    @app.exception_handler(RunLimitReached)
+    async def run_limit(_: Request, exc: RunLimitReached) -> JSONResponse:
+        return JSONResponse(
+            status_code=429, content={"error": "You've reached the limit of code runs for this interview."}
+        )
+
+    for module in (health, auth, users, cv, sessions, coding, admin, problems):
         app.include_router(module.router)
     return app
 

@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { listCvs, startSession, uploadCv, type CV, type Level, type Personality, type SessionType } from "../api";
+import {
+  getHealth,
+  listCvs,
+  startSession,
+  uploadCv,
+  type CV,
+  type Level,
+  type Personality,
+  type SessionType,
+} from "../api";
 import { useAuth } from "../auth";
 
 const ROLES = [
@@ -21,6 +30,7 @@ const TYPES: { value: SessionType; label: string }[] = [
   { value: "full", label: "Full interview (HR, then technical)" },
   { value: "hr", label: "HR / behavioural only" },
   { value: "technical", label: "Technical only" },
+  { value: "coding", label: "Coding exercise (live code editor)" },
 ];
 const PERSONALITIES: { value: Personality; label: string; hint: string }[] = [
   { value: "friendly_hr", label: "Friendly HR", hint: "Warm and patient" },
@@ -46,6 +56,14 @@ export default function SetupPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [codingAvailable, setCodingAvailable] = useState(true);
+  const isCoding = sessionType === "coding";
+
+  useEffect(() => {
+    getHealth()
+      .then((h) => setCodingAvailable(h.coding_available))
+      .catch(() => setCodingAvailable(false));
+  }, []);
 
   useEffect(() => {
     listCvs()
@@ -211,11 +229,22 @@ export default function SetupPage() {
             <label htmlFor="type">Interview type</label>
             <select id="type" value={sessionType} onChange={(e) => setSessionType(e.target.value as SessionType)}>
               {TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
+                <option
+                  key={t.value}
+                  value={t.value}
+                  disabled={t.value === "coding" && (Boolean(user?.is_guest) || !codingAvailable)}
+                >
                   {t.label}
+                  {t.value === "coding" && user?.is_guest ? " - account needed" : ""}
+                  {t.value === "coding" && !user?.is_guest && !codingAvailable ? " - unavailable right now" : ""}
                 </option>
               ))}
             </select>
+            {isCoding && (
+              <small className="muted">
+                One problem at your level in Python or JavaScript, then a question about your solution.
+              </small>
+            )}
           </div>
           <div className="field">
             <label htmlFor="personality">Interviewer style</label>
@@ -223,6 +252,7 @@ export default function SetupPage() {
               id="personality"
               value={personality}
               onChange={(e) => setPersonality(e.target.value as Personality)}
+              disabled={isCoding}
             >
               {PERSONALITIES.map((p) => (
                 <option key={p.value} value={p.value}>
@@ -240,10 +270,12 @@ export default function SetupPage() {
         )}
 
         <button className="primary" type="submit" disabled={busy || uploading}>
-          {busy ? "Preparing your first question…" : "Start interview"}
+          {busy ? "Preparing your first question…" : isCoding ? "Start coding exercise" : "Start interview"}
         </button>
         <p className="muted small">
-          {user?.is_guest ? "5" : "8"} questions · about {user?.is_guest ? "10" : "15"} minutes · text answers
+          {isCoding
+            ? "1 problem plus a follow-up · about 30 minutes · Python or JavaScript"
+            : `${user?.is_guest ? "5" : "8"} questions · about ${user?.is_guest ? "10" : "15"} minutes · text or voice answers`}
         </p>
       </form>
     </>

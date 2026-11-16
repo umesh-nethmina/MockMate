@@ -3,6 +3,7 @@ and CV-question rules), routes it to the right agent, enforces question limits (
 after every turn (NFR-12). It never calls Claude itself."""
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import coding
 from app import db as database
 from app.agents import evaluator, interviewer
 from app.agents.context import InterviewContext
@@ -33,6 +35,7 @@ log = logging.getLogger(__name__)
 CLOSING_TEXT = "That's the end of our interview - thank you for your time! I'm preparing your report now."
 INTERVIEWER_KINDS = {"follow_up": "follow_up", "next_topic": "question", "redirect": "redirect"}
 EVAL_WORKERS = 4
+SCORED_KINDS = ("answer", "code")  # candidate messages that get an Evaluation
 NO_ANSWERS_TEXT = "No answers were given, so there is nothing to score yet. Start a new interview to get feedback."
 DIFFICULTIES: list[Difficulty] = ["easy", "medium", "hard"]
 HR_SHARE_OF_FULL_INTERVIEW = 3 / 8
@@ -176,7 +179,7 @@ def _transcript(messages: list[Message]) -> list[Turn]:
 
 
 def question_for(session: InterviewSession, answer: Message) -> Message:
-    previous = [m for m in session.messages if m.speaker == "interviewer" and m.id < answer.id]
+    previous = [m for m in session.messages if m.speaker == "interviewer" and m.kind != "hint" and m.id < answer.id]
     return previous[-1]
 
 
@@ -248,9 +251,11 @@ def submit_answer(
     """
     if session.status != "active":
         raise SessionStateError("This interview has already ended.")
+    if session.session_type == "coding" and not coding.submitted(session):
+        raise SessionStateError("Submit your code first - then I'll ask you about it.")
 
     history = list(session.messages)
-    asked_last = next(m for m in reversed(history) if m.speaker == "interviewer")
+    asked_last = next(m for m in reversed(history) if m.speaker == "interviewer" and m.kind != "hint")
     answer = Message(speaker="candidate", kind="answer", round=asked_last.round, topic=asked_last.topic, text=text)
     _apply_voice(answer, text, voice)
 
@@ -316,6 +321,21 @@ def _store_evaluation(
     db.commit()
 
 
+ScoreJob = Callable[[LLM], LLMResult[AnswerScore]]
+
+
+def score_job(session: InterviewSession, answer: Message) -> ScoreJob:
+    """Collect everything needed to score one answer as plain data, so the LLM call can run on any thread."""
+    ctx = context_of(session)
+    if answer.kind == "code":
+        facts = coding.submission_facts(session)
+        assert facts is not None
+        return lambda llm: coding.score_submission(llm, ctx, facts)
+    question, text, rnd, spoken = question_for(session, answer).text, answer.text, answer.round, answer.is_voice
+    extra = coding.complexity_context(coding.submission_facts(session)) if rnd == "coding" else []
+    return lambda llm: evaluator.score_answer(llm, ctx, question, text, rnd, spoken=spoken, extra=extra)
+
+
 def evaluate_in_background(llm: LLM, session_id: str, answer_id: int) -> None:
     """Score one answer right after it is given, so the final report is fast (NFR-02)."""
     with database.SessionLocal() as db:
@@ -326,11 +346,8 @@ def evaluate_in_background(llm: LLM, session_id: str, answer_id: int) -> None:
         exists = db.scalar(select(Evaluation.id).where(Evaluation.message_id == answer_id))
         if exists:
             return
-        question = question_for(session, answer)
         try:
-            result = evaluator.score_answer(
-                llm, context_of(session), question.text, answer.text, answer.round, spoken=answer.is_voice
-            )
+            result = score_job(session, answer)(llm)
         except LLMError as err:
             log.warning("background evaluation failed for message %s; will retry at end: %s", answer_id, err)
             _record_failure(db, session_id, err)
@@ -349,17 +366,15 @@ def end_session(db: Session, llm: LLM, session: InterviewSession) -> Report:
         db.commit()
 
     ctx = context_of(session)
-    answers = [m for m in session.messages if m.kind == "answer"]
+    answers = [m for m in session.messages if m.kind in SCORED_KINDS]
     done_ids = {e.message_id for e in session.evaluations}
-    missing = [
-        (a, question_for(session, a).text, a.text, a.round, a.is_voice) for a in answers if a.id not in done_ids
-    ]
+    missing = [(a, score_job(session, a)) for a in answers if a.id not in done_ids]
 
     if missing:
-        def work(item: tuple[Message, str, str, str, bool]):
-            answer, question, text, rnd, spoken = item
+        def work(item: tuple[Message, ScoreJob]):
+            answer, job = item
             try:
-                return answer, evaluator.score_answer(llm, ctx, question, text, rnd, spoken=spoken)
+                return answer, job(llm)
             except LLMError as err:
                 return answer, err
 

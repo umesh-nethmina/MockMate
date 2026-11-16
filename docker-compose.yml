@@ -7,6 +7,10 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/mockmate.db
       CORS_ORIGINS: '["http://localhost:5173"]'
+      # The coding round starts sandbox containers through Docker. Giving this container the host's Docker
+      # socket would effectively give it root on the host, so the coding round is off here. Run the backend
+      # directly on the host (see CLAUDE.md) to use it locally.
+      SANDBOX_ENABLED: "false"
     volumes:
       - backend-data:/data
     ports:

@@ -15,6 +15,8 @@ const PACE_TIP = {
   fast: "Slow down a little and pause between points so the interviewer can follow.",
 } as const;
 
+const ROUND_TAG: Record<string, string> = { hr: "HR", technical: "Tech", coding: "Coding", code: "Code" };
+
 const fillerList = (words: Record<string, number>) =>
   Object.entries(words)
     .map(([w, n]) => `"${w}" ×${n}`)
@@ -138,7 +140,8 @@ export default function ReportPage() {
               <details key={i} className="card question">
                 <summary>
                   <span>
-                    <span className="round-tag">{q.round === "hr" ? "HR" : "Tech"}</span> Q{i + 1}. {q.question}
+                    <span className="round-tag">{ROUND_TAG[q.kind === "code" ? "code" : q.round] ?? "Tech"}</span> Q
+                    {i + 1}. {q.question}
                   </span>
                   <span className={`pill ${scoreClass(q.average)}`}>{q.average.toFixed(1)}</span>
                 </summary>
@@ -148,11 +151,11 @@ export default function ReportPage() {
                     <dd>{q.correctness}</dd>
                   </div>
                   <div>
-                    <dt>Clarity</dt>
+                    <dt>{q.kind === "code" ? "Code quality" : "Clarity"}</dt>
                     <dd>{q.clarity}</dd>
                   </div>
                   <div>
-                    <dt>Depth</dt>
+                    <dt>{q.kind === "code" ? "Efficiency" : "Depth"}</dt>
                     <dd>{q.depth}</dd>
                   </div>
                 </dl>
@@ -165,7 +168,20 @@ export default function ReportPage() {
                     ))}
                   </div>
                 )}
-                <h3 className="h4">Your answer {q.is_voice && <span className="muted">(spoken)</span>}</h3>
+                {q.kind === "code" ? (
+                  <>
+                    <h3 className="h4">
+                      Your code <span className="muted">({q.language === "javascript" ? "JavaScript" : "Python"})</span>
+                    </h3>
+                    <p className="muted small">
+                      {q.tests_passed} of {q.tests_total} tests passed · {q.hints_used ?? 0} hint
+                      {q.hints_used === 1 ? "" : "s"} used · correctness comes from the tests, minus a point per hint
+                    </p>
+                    <pre className="code">{q.answer}</pre>
+                  </>
+                ) : (
+                  <h3 className="h4">Your answer {q.is_voice && <span className="muted">(spoken)</span>}</h3>
+                )}
                 {q.is_voice && (
                   <p className="muted small">
                     {q.word_count} words
@@ -174,11 +190,11 @@ export default function ReportPage() {
                     {q.filler_words && Object.keys(q.filler_words).length > 0 && `: ${fillerList(q.filler_words)}`}
                   </p>
                 )}
-                <p className="quote">{q.answer}</p>
+                {q.kind !== "code" && <p className="quote">{q.answer}</p>}
                 <h3 className="h4">Feedback</h3>
                 <p>{q.feedback}</p>
                 <h3 className="h4">Model answer</h3>
-                <p className="quote model">{q.model_answer}</p>
+                <p className={`quote model ${q.kind === "code" ? "pre" : ""}`}>{q.model_answer}</p>
               </details>
             ))}
           </section>

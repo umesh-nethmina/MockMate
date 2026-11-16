@@ -60,11 +60,13 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - **Exit:** full interview by voice — server side verified; needs a manual run in Chrome/Edge with a microphone
 
 ## Phase 4 – Coding (Week 5)
-- [ ] CodingProblem model + admin CRUD with reference-solution validation (FR-60, UC-05)
-- [ ] Docker sandbox: no network, read-only FS, 5 s CPU, 128 MB, non-root (FR-31, NFR-07)
-- [ ] Run/submit endpoints, hidden tests (FR-32), hints (FR-33), complexity follow-up (FR-34)
-- [ ] Monaco editor page (FR-30)
-- **Exit:** sandbox passes security tests (network blocked, fork bomb/time/memory limits)
+- [x] CodingProblem model + admin CRUD with reference-solution validation (FR-60, UC-05); 7-problem starter bank seeded on first start-up; archive instead of delete
+- [x] Docker sandbox: no network, read-only FS, 5 s CPU, 128 MB, 64 pids, non-root, all caps dropped, 256 KB output cap, wall-clock kill (FR-31, NFR-07); per-test 2 s limit so slow code keeps partial results; Python 3.12 and Node 22
+- [x] Run (sample tests) / submit (sample + hidden) endpoints; hidden inputs never sent to the client (FR-32); 3 graduated pre-written hints, -1 correctness each (FR-33); complexity follow-up question scored against the submitted code (FR-34)
+- [x] Scoring: correctness from tests (deterministic), code quality and efficiency from a Claude code review (`code_review.v1`); one Claude call for the code + one for the follow-up
+- [x] Monaco editor workspace, lazy-loaded and bundled locally (FR-30); drafts kept per language in the browser; admin problem editor
+- **Exit:** sandbox passes security tests (network blocked, fork bomb/time/memory limits) — done, `tests/test_sandbox.py` against real containers
+- Notes: the harness runs inside the container with the hidden expected values, so a determined candidate could read them via introspection; acceptable for practice, not for hiring. Docker compose disables the coding round (no Docker socket in the container). **Deploy (Phase 6): Render web services can't start containers, so the sandbox needs its own host (small VM with Docker behind a runner API) or a hosted code-execution service.**
 
 ## Phase 5 – Progress (Weeks 6–7)
 - [ ] Progress endpoint + dashboard: score trend, 5 weakest topics (FR-51)

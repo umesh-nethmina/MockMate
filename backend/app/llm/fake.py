@@ -23,7 +23,7 @@ class FakeLLM:
         self.n = 0
 
     def structured(self, *, agent, prompt, messages, output_model, effort, max_tokens=8000):
-        from app.agents.evaluator import AnswerScore, ReportSummary, StarFlags
+        from app.agents.evaluator import AnswerScore, CodeReview, ReportSummary, StarFlags
         from app.agents.interviewer import InterviewerTurn
 
         self.calls.append({"agent": agent, "prompt": prompt, "messages": messages, "effort": effort})
@@ -46,6 +46,8 @@ class FakeLLM:
                               feedback="Good.", model_answer="Model.")
         elif output_model is ReportSummary:
             out = ReportSummary(strengths=["s"], weaknesses=["w"], summary="Summary.")
+        elif output_model is CodeReview:
+            out = CodeReview(code_quality=7, efficiency=6, feedback="Readable code.", model_answer="Use a hash map.")
         else:  # pragma: no cover
             raise AssertionError(output_model)
         return LLMResult(out, usage)
@@ -58,7 +60,7 @@ class DemoLLM(FakeLLM):
     """FakeLLM with readable text, for clicking through the UI locally."""
 
     def structured(self, *, agent, prompt, messages, output_model, effort, max_tokens=8000):
-        from app.agents.evaluator import AnswerScore, ReportSummary
+        from app.agents.evaluator import AnswerScore, CodeReview, ReportSummary
         from app.agents.interviewer import InterviewerTurn
 
         result = super().structured(agent=agent, prompt=prompt, messages=messages, output_model=output_model,
@@ -78,6 +80,9 @@ class DemoLLM(FakeLLM):
             out.correctness, out.clarity, out.depth = base, min(10, base + 1), max(1, base - 1)
             out.feedback = "(Demo mode) You answered the question; adding a concrete example would make it stronger."
             out.model_answer = "(Demo mode) A strong answer would state the situation, what you did, and the result."
+        elif isinstance(out, CodeReview):
+            out.feedback = "(Demo mode) Your code is readable; check the complexity and the edge cases."
+            out.model_answer = "(Demo mode) Set ANTHROPIC_API_KEY to get a real review and an optimal solution."
         elif isinstance(out, ReportSummary):
             out.strengths = ["(Demo mode) Clear, direct answers"]
             out.weaknesses = ["(Demo mode) Add specific examples and measurable results"]

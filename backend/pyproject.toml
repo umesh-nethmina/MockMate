@@ -9,6 +9,7 @@ addopts = "-q"
 
 [tool.coverage.run]
 source = ["app"]
+omit = ["app/tools/harness/*"]  # runs inside the sandbox container, covered by tests/test_sandbox.py
 
 [tool.coverage.report]
 fail_under = 70

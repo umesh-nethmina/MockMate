@@ -32,10 +32,6 @@ def test_session_type_and_personality_reach_the_prompt(client, fake_llm):
     assert "Round for the next question: technical" in interviewer_notes(fake_llm)[0]
 
 
-def test_coding_session_type_not_available_yet(client):
-    assert client.post("/sessions", json={**SETUP, "session_type": "coding"}).status_code == 422
-
-
 def test_difficulty_rises_after_strong_and_falls_after_two_weak(client, fake_llm, db):
     sid = client.post("/sessions", json={**SETUP, "session_type": "technical"}).json()["session_id"]
     fake_llm.queue.append(turn(previous_answer_quality="strong"))

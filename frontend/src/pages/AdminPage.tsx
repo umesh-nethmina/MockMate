@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getUsage, type Usage } from "../api";
+import AdminProblems from "./AdminProblems";
 
 const usd = (n: number) => `$${n.toFixed(n < 1 ? 3 : 2)}`;
 
@@ -108,6 +109,7 @@ export default function AdminPage() {
           </table>
         </div>
       </section>
+      <AdminProblems />
     </>
   );
 }

@@ -55,7 +55,7 @@ class InterviewSession(Base):
     role: Mapped[str] = mapped_column(String(100))
     level: Mapped[str] = mapped_column(String(10))
     job_description: Mapped[str] = mapped_column(Text, default="")
-    session_type: Mapped[str] = mapped_column(String(20), default="full")  # full / hr / technical
+    session_type: Mapped[str] = mapped_column(String(20), default="full")  # full / hr / technical / coding
     personality: Mapped[str] = mapped_column(String(30), default="friendly_hr")
     status: Mapped[str] = mapped_column(String(20), default="active")  # active / paused / completed
     question_limit: Mapped[int] = mapped_column(Integer, default=8)
@@ -66,8 +66,15 @@ class InterviewSession(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    # Coding round (FR-30..FR-34)
+    problem_id: Mapped[int | None] = mapped_column(ForeignKey("coding_problems.id", ondelete="SET NULL"))
+    hints_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     user: Mapped[User | None] = relationship(back_populates="sessions")
+    problem: Mapped["CodingProblem | None"] = relationship()
+    code_runs: Mapped[list["CodeRun"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="CodeRun.id"
+    )
     messages: Mapped[list["Message"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="Message.id"
     )
@@ -84,7 +91,7 @@ class Message(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     speaker: Mapped[str] = mapped_column(String(12))  # interviewer / candidate / system
-    # interviewer: question / follow_up / redirect / closing; candidate: answer / off_topic
+    # interviewer: question / follow_up / redirect / closing / hint; candidate: answer / off_topic / code
     kind: Mapped[str] = mapped_column(String(12))
     round: Mapped[str] = mapped_column(String(10), default="technical")  # hr / technical / coding
     topic: Mapped[str | None] = mapped_column(String(100))
@@ -159,3 +166,46 @@ class LlmCall(Base):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     ok: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class CodingProblem(Base):
+    """A coding exercise (FR-60). Tests are JSON: [{"args": [...], "expected": ..., "hidden": bool}]."""
+
+    __tablename__ = "coding_problems"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(120))
+    difficulty: Mapped[str] = mapped_column(String(10))  # easy / medium / hard
+    topic: Mapped[str] = mapped_column(String(100))
+    statement: Mapped[str] = mapped_column(Text)
+    function_name: Mapped[str] = mapped_column(String(60))  # snake_case; camelCase for JavaScript
+    params: Mapped[list] = mapped_column(JSON)
+    tests: Mapped[list] = mapped_column(JSON)
+    hints: Mapped[list] = mapped_column(JSON, default=list)  # graduated: nudge first, near-solution last (FR-33)
+    reference_solution: Mapped[str] = mapped_column(Text)  # Python; checked against every test on save
+    expected_complexity: Mapped[str] = mapped_column(String(200), default="")
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class CodeRun(Base):
+    """One sandbox run of the candidate's code: `run` uses the sample tests, `submit` uses all of them."""
+
+    __tablename__ = "code_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # run / submit
+    language: Mapped[str] = mapped_column(String(20))
+    code: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20))
+    message: Mapped[str | None] = mapped_column(Text)
+    passed: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    hidden_passed: Mapped[int] = mapped_column(Integer, default=0)
+    hidden_total: Mapped[int] = mapped_column(Integer, default=0)
+    results: Mapped[list] = mapped_column(JSON, default=list)  # per sample test; hidden tests are only counted
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    session: Mapped[InterviewSession] = relationship(back_populates="code_runs")

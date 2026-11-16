@@ -6,13 +6,14 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import orchestrator
+from app import coding, orchestrator
 from app.api.auth import purge_expired_guests
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_db
 from app.llm import LLM, get_llm
 from app.models import CV, InterviewSession, User
+from app.tools.sandbox import Sandbox, get_sandbox
 from app.tools.speech_metrics import pace_label, word_count
 from app.usage import check_daily_cap
 
@@ -28,7 +29,7 @@ class StartSessionRequest(BaseModel):
     level: Literal["intern", "junior", "mid"]  # FR-04
     job_description: Annotated[Text, StringConstraints(max_length=5000)] = ""  # FR-05
     cv_id: int | None = None  # FR-06
-    session_type: Literal["full", "hr", "technical"] = "full"  # FR-07 (coding arrives in Phase 4)
+    session_type: Literal["full", "hr", "technical", "coding"] = "full"  # FR-07
     personality: Literal["friendly_hr", "strict_tech_lead", "fast_paced_founder"] = "friendly_hr"  # FR-08
     question_limit: int | None = Field(default=None, ge=1, le=20)  # FR-14
 
@@ -78,6 +79,7 @@ class SessionOut(BaseModel):
 
 
 class QuestionResult(BaseModel):
+    kind: str  # "answer", or "code" for a coding submission
     question: str
     round: str
     topic: str | None
@@ -96,6 +98,11 @@ class QuestionResult(BaseModel):
     pace: str | None
     filler_count: int | None
     filler_words: dict[str, int] | None
+    # Coding submissions (FR-32, FR-33)
+    language: str | None = None
+    tests_passed: int | None = None
+    tests_total: int | None = None
+    hints_used: int | None = None
 
 
 class DeliverySummary(BaseModel):
@@ -148,13 +155,25 @@ def _report_out(session: InterviewSession) -> ReportOut:
     report = session.report
     assert report is not None
     by_id = {m.id: m for m in session.messages}
+    submission = coding.last_submission(session)
     questions = []
     for ev in session.evaluations:
         answer = by_id[ev.message_id]
-        question = orchestrator.question_for(session, answer)
+        question = orchestrator.question_for(session, answer).text
+        code_fields: dict = {}
+        if answer.kind == "code" and submission is not None:
+            if session.problem is not None:
+                question = f"{session.problem.title}: {session.problem.statement}"
+            code_fields = {
+                "language": submission.language,
+                "tests_passed": submission.passed + submission.hidden_passed,
+                "tests_total": submission.total + submission.hidden_total,
+                "hints_used": session.hints_used,
+            }
         questions.append(
             QuestionResult(
-                question=question.text,
+                kind=answer.kind,
+                question=question,
                 round=answer.round,
                 topic=ev.topic,
                 answer=answer.text,
@@ -171,6 +190,7 @@ def _report_out(session: InterviewSession) -> ReportOut:
                 pace=pace_label(answer.wpm),
                 filler_count=answer.filler_count,
                 filler_words=answer.filler_words,
+                **code_fields,
             )
         )
     return ReportOut(
@@ -191,6 +211,9 @@ def _report_out(session: InterviewSession) -> ReportOut:
 
 
 def _delivery(questions: list[QuestionResult]) -> DeliverySummary | None:
+    if not questions:
+        return None
+    questions = [q for q in questions if q.kind == "answer"]  # code is not spoken delivery
     if not questions:
         return None
     voice = [q for q in questions if q.is_voice]
@@ -219,6 +242,7 @@ def start_session(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     llm: LLM = Depends(get_llm),
+    sandbox: Sandbox = Depends(get_sandbox),
 ) -> TurnResponse:
     settings = get_settings()
     purge_expired_guests(db)
@@ -232,6 +256,27 @@ def start_session(
                 status.HTTP_403_FORBIDDEN, "Guests can try one interview. Create a free account to keep practising."
             )
         question_limit = min(question_limit, settings.guest_question_limit)
+        if body.session_type == "coding":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Create a free account to try the coding round.")
+
+    if body.session_type == "coding":  # FR-30: no Claude call to start; the problem is picked by rule
+        if not sandbox.available():
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "The coding round is not available right now. Try another type."
+            )
+        problem = coding.pick_problem(db, user.id, body.level)
+        if problem is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No coding problems are set up yet.")
+        session, first = coding.start_coding_session(
+            db,
+            user_id=user.id,
+            problem=problem,
+            role=body.role,
+            level=body.level,
+            job_description=body.job_description,
+            personality=body.personality,
+        )
+        return _turn(session, first, done=False)
 
     cv_text = ""
     if body.cv_id is not None:

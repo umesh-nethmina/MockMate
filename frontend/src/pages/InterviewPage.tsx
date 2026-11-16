@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { endSession, getSession, sendAnswer, type Message, type SessionState } from "../api";
 import { readPref, useSpeechRecognition, useSpeechSynthesis, writePref } from "../speech";
+
+// The editor bundle is large, so it only loads for coding interviews
+const CodingWorkspace = lazy(() => import("./CodingWorkspace"));
 
 type Mode = "text" | "voice";
 
@@ -46,6 +49,14 @@ export default function InterviewPage() {
   }, [rec.transcript, rec.listening]);
 
   // Read each new interviewer message aloud unless muted (FR-21)
+  const reload = useCallback(async () => setSession(await getSession(id)), [id]);
+
+  // The coding workspace needs a wider page than the chat layout
+  const wide = session?.session_type === "coding";
+  useEffect(() => {
+    document.body.classList.toggle("wide-page", wide);
+    return () => document.body.classList.remove("wide-page");
+  }, [wide]);
   const interviewerMsgs = session?.messages.filter((m) => m.speaker === "interviewer") ?? [];
   const lastInterviewer = interviewerMsgs[interviewerMsgs.length - 1];
 
@@ -166,7 +177,9 @@ export default function InterviewPage() {
 
   const current = Math.min(session.questions_asked, session.question_limit);
   const active = !ended && !finishing;
-  const roundLabel = lastInterviewer?.round === "hr" ? "HR round" : "Technical round";
+  const isCoding = session.session_type === "coding";
+  const codeSubmitted = session.messages.some((m) => m.kind === "code");
+  const roundLabel = isCoding ? "Coding round" : lastInterviewer?.round === "hr" ? "HR round" : "Technical round";
   const shown = rec.listening ? join(draft, rec.interim) : draft;
 
   return (
@@ -191,9 +204,15 @@ export default function InterviewPage() {
         </button>
       </div>
 
+      {isCoding && (
+        <Suspense fallback={<p className="muted">Loading the code editor…</p>}>
+          <CodingWorkspace sessionId={id} active={active} onChanged={reload} />
+        </Suspense>
+      )}
+
       <ol className="chat" aria-live="polite">
         {session.messages.map((m) => (
-          <li key={m.id} className={`bubble ${m.speaker}`}>
+          <li key={m.id} className={`bubble ${m.speaker} ${m.kind === "hint" ? "hint" : ""}`}>
             <span className="who">
               {m.speaker === "interviewer" ? "Interviewer" : "You"}
               {m.speaker === "interviewer" && tts.supported && (
@@ -208,7 +227,7 @@ export default function InterviewPage() {
                 </button>
               )}
             </span>
-            <p>{m.text}</p>
+            {m.kind === "code" ? <pre className="code">{m.text}</pre> : <p>{m.text}</p>}
           </li>
         ))}
         {thinking && (
@@ -232,6 +251,8 @@ export default function InterviewPage() {
         <button className="primary" onClick={() => void finish()}>
           Generate report
         </button>
+      ) : isCoding && !codeSubmitted ? (
+        <p className="muted small center">Submit your code to answer the interviewer's follow-up question.</p>
       ) : (
         <form className="composer" onSubmit={submit}>
           <div className="composer-bar">

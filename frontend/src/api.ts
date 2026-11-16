@@ -44,7 +44,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 // ---------- types ----------
 
 export type Level = "intern" | "junior" | "mid";
-export type SessionType = "full" | "hr" | "technical";
+export type SessionType = "full" | "hr" | "technical" | "coding";
 export type Personality = "friendly_hr" | "strict_tech_lead" | "fast_paced_founder";
 
 export type User = { id: number; email: string | null; name: string; is_admin: boolean; is_guest: boolean };
@@ -53,7 +53,7 @@ export type TokenResponse = { access_token: string; expires_at: string; user: Us
 export type Message = {
   id: number;
   speaker: "interviewer" | "candidate" | "system";
-  kind: "question" | "follow_up" | "redirect" | "closing" | "answer" | "off_topic";
+  kind: "question" | "follow_up" | "redirect" | "closing" | "hint" | "answer" | "off_topic" | "code";
   round: string;
   topic: string | null;
   text: string;
@@ -99,6 +99,7 @@ export type SessionSummary = {
 export type Star = { situation: boolean; task: boolean; action: boolean; result: boolean };
 
 export type QuestionResult = {
+  kind: "answer" | "code";
   question: string;
   round: string;
   topic: string | null;
@@ -116,6 +117,10 @@ export type QuestionResult = {
   pace: "slow" | "good" | "fast" | null;
   filler_count: number | null;
   filler_words: Record<string, number> | null;
+  language: CodeLanguage | null;
+  tests_passed: number | null;
+  tests_total: number | null;
+  hints_used: number | null;
 };
 
 export type Delivery = {
@@ -142,6 +147,68 @@ export type Report = {
   cost_usd: number;
   created_at: string;
 };
+
+export type CodeLanguage = "python" | "javascript";
+export type TestRow = {
+  hidden: boolean;
+  ok: boolean;
+  error: string | null;
+  args?: unknown[];
+  expected?: unknown;
+  output?: unknown;
+  stdout?: string;
+  ms?: number | null;
+};
+export type CodeRun = {
+  id: number;
+  kind: "run" | "submit";
+  language: CodeLanguage;
+  code: string;
+  status: "ok" | "compile_error" | "time_limit" | "memory_limit" | "output_limit" | "runtime_error";
+  message: string | null;
+  passed: number;
+  total: number;
+  hidden_passed: number;
+  hidden_total: number;
+  results: TestRow[];
+  duration_ms: number;
+  created_at: string;
+};
+export type Problem = {
+  title: string;
+  difficulty: "easy" | "medium" | "hard";
+  topic: string;
+  statement: string;
+  function_names: Record<CodeLanguage, string>;
+  params: string[];
+  starter_code: Record<CodeLanguage, string>;
+  samples: { args: unknown[]; expected: unknown }[];
+  hidden_tests: number;
+  hints_total: number;
+  hints_used: number;
+  submitted: boolean;
+  last_run: CodeRun | null;
+};
+export type Hint = { message: Message; hints_used: number; hints_total: number };
+export type SubmitResult = Turn & { run: CodeRun };
+
+export type ProblemTest = { args: unknown[]; expected: unknown; hidden: boolean };
+export type ProblemInput = {
+  title: string;
+  difficulty: "easy" | "medium" | "hard";
+  topic: string;
+  statement: string;
+  function_name: string;
+  params: string[];
+  tests: ProblemTest[];
+  hints: string[];
+  reference_solution: string;
+  expected_complexity: string;
+  is_active: boolean;
+};
+export type AdminProblem = ProblemInput & { id: number; created_at: string; times_used: number };
+
+export type Health = { status: string; environment: string; coding_available: boolean };
 
 export type CV = { id: number; file_name: string; chars: number; truncated: boolean; preview: string; uploaded_at: string };
 
@@ -218,3 +285,21 @@ export const getReport = (id: string) => api<Report>(`/sessions/${id}/report`);
 export const deleteSession = (id: string) => api<void>(`/sessions/${id}`, { method: "DELETE" });
 
 export const getUsage = (days = 7) => api<Usage>(`/admin/usage?days=${days}`);
+
+export const getHealth = () => api<Health>("/health");
+
+// coding round (FR-30..FR-34)
+export const getProblem = (id: string) => api<Problem>(`/sessions/${id}/problem`);
+export const runCode = (id: string, language: CodeLanguage, code: string) =>
+  api<CodeRun>(`/sessions/${id}/code/run`, { method: "POST", body: json({ language, code }) });
+export const submitCode = (id: string, language: CodeLanguage, code: string) =>
+  api<SubmitResult>(`/sessions/${id}/code/submit`, { method: "POST", body: json({ language, code }) });
+export const requestHint = (id: string) => api<Hint>(`/sessions/${id}/code/hint`, { method: "POST" });
+
+// admin: coding problems (FR-60)
+export const listProblems = () => api<AdminProblem[]>("/admin/problems");
+export const createProblem = (p: ProblemInput) =>
+  api<AdminProblem>("/admin/problems", { method: "POST", body: json(p) });
+export const updateProblem = (id: number, p: ProblemInput) =>
+  api<AdminProblem>(`/admin/problems/${id}`, { method: "PUT", body: json(p) });
+export const archiveProblem = (id: number) => api<void>(`/admin/problems/${id}`, { method: "DELETE" });
