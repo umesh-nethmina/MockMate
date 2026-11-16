@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
 
     claude_model: str = "claude-opus-5-5"
+    # Reasoning effort per agent: low | medium | high. Interviewer is latency-sensitive (NFR-01).
+    interviewer_effort: str = "low"
+    evaluator_effort: str = "medium"
+    report_effort: str = "low"
+    # Server-side refusal fallback (Claude API only; turn off for Bedrock/Vertex/Foundry).
+    llm_fallbacks: bool = True
     database_url: str = "sqlite:///./mockmate.db"
     cors_origins: list[str] = ["http://localhost:5173"]
 
