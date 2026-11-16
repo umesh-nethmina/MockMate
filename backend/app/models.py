@@ -1,4 +1,4 @@
-"""Persistent entities (SRS section 6). User and CV arrive in Phase 2."""
+"""Persistent entities (SRS section 6)."""
 
 import uuid
 from datetime import UTC, datetime
@@ -17,24 +17,57 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True)  # None for guests
+    password_hash: Mapped[str | None] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(100), default="")
+    is_admin: Mapped[bool] = mapped_column(default=False)
+    is_guest: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+    sessions: Mapped[list["InterviewSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+    cvs: Mapped[list["CV"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
+
+
+class CV(Base):
+    """Only the extracted text is kept; the uploaded PDF is never written to disk (SRS 6.1)."""
+
+    __tablename__ = "cvs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    file_name: Mapped[str] = mapped_column(String(255))
+    extracted_text: Mapped[str] = mapped_column(Text)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class InterviewSession(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    user_id: Mapped[int | None] = mapped_column(Integer, index=True)  # FK to users in Phase 2
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    cv_id: Mapped[int | None] = mapped_column(ForeignKey("cvs.id", ondelete="SET NULL"))
     role: Mapped[str] = mapped_column(String(100))
     level: Mapped[str] = mapped_column(String(10))
     job_description: Mapped[str] = mapped_column(Text, default="")
-    session_type: Mapped[str] = mapped_column(String(20), default="full")
+    session_type: Mapped[str] = mapped_column(String(20), default="full")  # full / hr / technical
     personality: Mapped[str] = mapped_column(String(30), default="friendly_hr")
     status: Mapped[str] = mapped_column(String(20), default="active")  # active / paused / completed
     question_limit: Mapped[int] = mapped_column(Integer, default=8)
     questions_asked: Mapped[int] = mapped_column(Integer, default=0)
+    difficulty: Mapped[str] = mapped_column(String(10), default="medium")  # current target (FR-12)
+    cv_text: Mapped[str] = mapped_column(Text, default="")  # snapshot, so deleting the CV keeps the record
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
+    user: Mapped[User | None] = relationship(back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="Message.id"
     )
@@ -56,6 +89,8 @@ class Message(Base):
     round: Mapped[str] = mapped_column(String(10), default="technical")  # hr / technical / coding
     topic: Mapped[str | None] = mapped_column(String(100))
     difficulty: Mapped[str | None] = mapped_column(String(10))
+    about_cv: Mapped[bool] = mapped_column(default=False)  # interviewer asked about a CV project (FR-13)
+    quality: Mapped[str | None] = mapped_column(String(10))  # interviewer's quick read of a candidate answer
     text: Mapped[str] = mapped_column(Text)
     is_voice: Mapped[bool] = mapped_column(default=False)
     wpm: Mapped[float | None] = mapped_column(Float)

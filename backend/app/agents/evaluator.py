@@ -1,4 +1,4 @@
-"""Evaluator agent: scores each answer (FR-40) and writes the report summary (FR-41)."""
+"""Evaluator agent: scores each answer (FR-40), checks STAR (FR-42) and writes the report summary (FR-41)."""
 
 import json
 from dataclasses import dataclass
@@ -9,14 +9,22 @@ from app.agents.context import InterviewContext, tag
 from app.config import get_settings
 from app.llm import LLM, LLMResult
 
-ANSWER_PROMPT = "evaluator.v1"
+ANSWER_PROMPT = "evaluator.v2"
 REPORT_PROMPT = "report.v1"
+
+
+class StarFlags(BaseModel):
+    situation: bool
+    task: bool
+    action: bool
+    result: bool
 
 
 class AnswerScore(BaseModel):
     correctness: int = Field(description="1-10")
     clarity: int = Field(description="1-10")
     depth: int = Field(description="1-10")
+    star: StarFlags
     feedback: str
     model_answer: str
 
@@ -38,14 +46,24 @@ class ReportSummary(BaseModel):
 @dataclass(frozen=True)
 class ScoredItem:
     topic: str
+    round: str
     correctness: int
     clarity: int
     depth: int
     feedback: str
 
 
-def score_answer(llm: LLM, ctx: InterviewContext, question: str, answer: str) -> LLMResult[AnswerScore]:
-    content = "\n\n".join([ctx.as_prompt(), tag("question", question), tag("candidate_answer", answer)])
+def score_answer(
+    llm: LLM, ctx: InterviewContext, question: str, answer: str, round: str = "technical"
+) -> LLMResult[AnswerScore]:
+    content = "\n\n".join(
+        [
+            ctx.as_prompt(include_style=False, include_cv=False),
+            f"Round: {round}",
+            tag("question", question),
+            tag("candidate_answer", answer),
+        ]
+    )
     result = llm.structured(
         agent="evaluator",
         prompt=ANSWER_PROMPT,

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # Secrets: only ever set via environment (NFR-06)
     anthropic_api_key: str = ""
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = "dev-only-insecure-jwt-secret-change-me"  # rejected in production
 
     claude_model: str = "claude-opus-5-5"
     # Reasoning effort per agent: low | medium | high. Interviewer is latency-sensitive (NFR-01).
@@ -30,7 +30,22 @@ class Settings(BaseSettings):
     default_question_limit: int = 8  # FR-14
     daily_cost_cap_usd: float = 5.0  # FR-62
 
+    jwt_expire_hours: int = 24  # NFR-05
+    admin_emails: list[str] = []  # accounts registered with these emails become administrators
+    guest_question_limit: int = 5  # FR-02: one short text interview
+    guest_ttl_hours: int = 24  # SRS 6.1: guest sessions deleted after 24 h
+    cv_max_bytes: int = 5 * 1024 * 1024  # FR-06
+    cv_max_chars: int = 12_000  # keeps prompts small and limits injection surface (NFR-09)
+
+
+DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-change-me"
+
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if settings.environment == "production" and (
+        settings.jwt_secret in (DEV_JWT_SECRET, "change-me") or len(settings.jwt_secret) < 32
+    ):
+        raise RuntimeError("Set JWT_SECRET to a random string of at least 32 characters in production")
+    return settings

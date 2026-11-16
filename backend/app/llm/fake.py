@@ -23,7 +23,7 @@ class FakeLLM:
         self.n = 0
 
     def structured(self, *, agent, prompt, messages, output_model, effort, max_tokens=8000):
-        from app.agents.evaluator import AnswerScore, ReportSummary
+        from app.agents.evaluator import AnswerScore, ReportSummary, StarFlags
         from app.agents.interviewer import InterviewerTurn
 
         self.calls.append({"agent": agent, "prompt": prompt, "messages": messages, "effort": effort})
@@ -37,10 +37,13 @@ class FakeLLM:
 
         if output_model is InterviewerTurn:
             self.n += 1
-            out = InterviewerTurn(decision="next_topic", round="technical", topic=f"Topic {self.n}",
-                                  difficulty="medium", question=f"Question {self.n}?")
+            out = InterviewerTurn(decision="next_topic", previous_answer_quality="none" if self.n == 1 else "adequate",
+                                  round="technical", topic=f"Topic {self.n}", difficulty="medium",
+                                  about_cv_project=False, question=f"Question {self.n}?")
         elif output_model is AnswerScore:
-            out = AnswerScore(correctness=8, clarity=6, depth=7, feedback="Good.", model_answer="Model.")
+            out = AnswerScore(correctness=8, clarity=6, depth=7,
+                              star=StarFlags(situation=True, task=True, action=True, result=False),
+                              feedback="Good.", model_answer="Model.")
         elif output_model is ReportSummary:
             out = ReportSummary(strengths=["s"], weaknesses=["w"], summary="Summary.")
         else:  # pragma: no cover
@@ -63,6 +66,10 @@ class DemoLLM(FakeLLM):
         out = result.output
         if isinstance(out, InterviewerTurn):
             out.question = SAMPLE_QUESTIONS[(self.n - 1) % len(SAMPLE_QUESTIONS)]
+            note = str(messages[-1]["content"])
+            if "must be about a specific project named in the CV" in note:
+                out.question = "Your CV mentions a project - what was your own role in it, and what was the result?"
+                out.about_cv_project = True
             out.topic = ["Projects", "Problem solving", "Python basics", "Teamwork", "Testing", "Web basics",
                          "Debugging", "Motivation"][(self.n - 1) % 8]
         elif isinstance(out, AnswerScore):

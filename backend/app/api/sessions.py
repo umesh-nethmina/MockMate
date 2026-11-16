@@ -1,15 +1,19 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import orchestrator
+from app.api.auth import purge_expired_guests
+from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_db
 from app.llm import LLM, get_llm
-from app.models import InterviewSession
+from app.models import CV, InterviewSession, User
+from app.usage import check_daily_cap
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -22,6 +26,9 @@ class StartSessionRequest(BaseModel):
     role: Annotated[Text, StringConstraints(min_length=2, max_length=100)]  # FR-03
     level: Literal["intern", "junior", "mid"]  # FR-04
     job_description: Annotated[Text, StringConstraints(max_length=5000)] = ""  # FR-05
+    cv_id: int | None = None  # FR-06
+    session_type: Literal["full", "hr", "technical"] = "full"  # FR-07 (coding arrives in Phase 4)
+    personality: Literal["friendly_hr", "strict_tech_lead", "fast_paced_founder"] = "friendly_hr"  # FR-08
     question_limit: int | None = Field(default=None, ge=1, le=20)  # FR-14
 
 
@@ -53,6 +60,9 @@ class SessionOut(BaseModel):
     id: str
     role: str
     level: str
+    session_type: str
+    personality: str
+    has_cv: bool
     job_description: str
     status: str
     questions_asked: int
@@ -64,12 +74,14 @@ class SessionOut(BaseModel):
 
 class QuestionResult(BaseModel):
     question: str
+    round: str
     topic: str | None
     answer: str
     correctness: int
     clarity: int
     depth: int
     average: float
+    star: dict[str, bool] | None
     feedback: str
     model_answer: str
 
@@ -78,6 +90,7 @@ class ReportOut(BaseModel):
     session_id: str
     role: str
     level: str
+    session_type: str
     overall_score: float
     strengths: list[str]
     weaknesses: list[str]
@@ -90,9 +103,11 @@ class ReportOut(BaseModel):
 
 # ---------- helpers ----------
 
-def _get_session(db: Session, session_id: str) -> InterviewSession:
+def get_owned_session(
+    session_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> InterviewSession:
     session = db.get(InterviewSession, session_id)
-    if session is None:
+    if session is None or session.user_id != user.id:  # same 404 either way: don't reveal other users' ids
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     return session
 
@@ -118,12 +133,14 @@ def _report_out(session: InterviewSession) -> ReportOut:
         questions.append(
             QuestionResult(
                 question=question.text,
+                round=answer.round,
                 topic=ev.topic,
                 answer=answer.text,
                 correctness=ev.correctness,
                 clarity=ev.clarity,
                 depth=ev.depth,
                 average=ev.average,
+                star=ev.star_flags,
                 feedback=ev.feedback,
                 model_answer=ev.model_answer,
             )
@@ -132,6 +149,7 @@ def _report_out(session: InterviewSession) -> ReportOut:
         session_id=session.id,
         role=session.role,
         level=session.level,
+        session_type=session.session_type,
         overall_score=report.overall_score,
         strengths=report.strengths,
         weaknesses=report.weaknesses,
@@ -147,26 +165,56 @@ def _report_out(session: InterviewSession) -> ReportOut:
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def start_session(
-    body: StartSessionRequest, db: Session = Depends(get_db), llm: LLM = Depends(get_llm)
+    body: StartSessionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    llm: LLM = Depends(get_llm),
 ) -> TurnResponse:
+    settings = get_settings()
+    purge_expired_guests(db)
+    check_daily_cap(db)  # FR-62
+
+    question_limit = body.question_limit or settings.default_question_limit
+    if user.is_guest:  # FR-02: one short text interview
+        has_session = db.scalar(select(func.count()).where(InterviewSession.user_id == user.id))
+        if has_session:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Guests can try one interview. Create a free account to keep practising."
+            )
+        question_limit = min(question_limit, settings.guest_question_limit)
+
+    cv_text = ""
+    if body.cv_id is not None:
+        cv = db.get(CV, body.cv_id)
+        if cv is None or cv.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "CV not found")
+        cv_text = cv.extracted_text
+
     session, first = orchestrator.start_session(
         db,
         llm,
+        user_id=user.id,
         role=body.role,
         level=body.level,
         job_description=body.job_description,
-        question_limit=body.question_limit or get_settings().default_question_limit,
+        question_limit=question_limit,
+        session_type=body.session_type,
+        personality=body.personality,
+        cv_id=body.cv_id,
+        cv_text=cv_text,
     )
     return _turn(session, first, done=False)
 
 
 @router.get("/{session_id}")
-def get_session(session_id: str, db: Session = Depends(get_db)) -> SessionOut:
-    s = _get_session(db, session_id)
+def get_session(s: InterviewSession = Depends(get_owned_session)) -> SessionOut:
     return SessionOut(
         id=s.id,
         role=s.role,
         level=s.level,
+        session_type=s.session_type,
+        personality=s.personality,
+        has_cv=bool(s.cv_text.strip()),
         job_description=s.job_description,
         status=s.status,
         questions_asked=s.questions_asked,
@@ -179,13 +227,12 @@ def get_session(session_id: str, db: Session = Depends(get_db)) -> SessionOut:
 
 @router.post("/{session_id}/answer")
 def submit_answer(
-    session_id: str,
     body: AnswerRequest,
     background: BackgroundTasks,
+    session: InterviewSession = Depends(get_owned_session),
     db: Session = Depends(get_db),
     llm: LLM = Depends(get_llm),
 ) -> TurnResponse:
-    session = _get_session(db, session_id)
     reply, done, answer_id = orchestrator.submit_answer(db, llm, session, body.text)
     if answer_id is not None:
         background.add_task(orchestrator.evaluate_in_background, llm, session.id, answer_id)
@@ -193,15 +240,25 @@ def submit_answer(
 
 
 @router.post("/{session_id}/end")
-def end_session(session_id: str, db: Session = Depends(get_db), llm: LLM = Depends(get_llm)) -> ReportOut:
-    session = _get_session(db, session_id)
+def end_session(
+    session: InterviewSession = Depends(get_owned_session),
+    db: Session = Depends(get_db),
+    llm: LLM = Depends(get_llm),
+) -> ReportOut:
     orchestrator.end_session(db, llm, session)
     return _report_out(session)
 
 
 @router.get("/{session_id}/report")
-def get_report(session_id: str, db: Session = Depends(get_db)) -> ReportOut:
-    session = _get_session(db, session_id)
+def get_report(session: InterviewSession = Depends(get_owned_session)) -> ReportOut:
     if session.report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not ready - end the session first")
     return _report_out(session)
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(session: InterviewSession = Depends(get_owned_session), db: Session = Depends(get_db)) -> Response:
+    """FR-54: delete one session with its messages, evaluations and report."""
+    db.delete(session)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

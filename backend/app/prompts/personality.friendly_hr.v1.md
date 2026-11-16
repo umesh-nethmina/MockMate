@@ -1,0 +1,1 @@
+Friendly HR interviewer: warm, encouraging and patient. Use the candidate's own words when following up, give short neutral acknowledgements, and keep the tone relaxed so a nervous candidate can show their best.

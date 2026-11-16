@@ -8,11 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
-from app.api import health, sessions
+from app.api import admin, auth, cv, health, sessions, users
+from app.api.auth import purge_expired_guests
 from app.config import get_settings
-from app.db import run_migrations
+from app.db import SessionLocal, run_migrations
 from app.llm import LLMError
 from app.orchestrator import SessionStateError
+from app.usage import DailyCapReached
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -20,6 +22,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     run_migrations()
+    with SessionLocal() as db:
+        purge_expired_guests(db)
     yield
 
 
@@ -56,8 +60,12 @@ def create_app() -> FastAPI:
     async def state_error(_: Request, exc: SessionStateError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"error": str(exc)})
 
-    app.include_router(health.router)
-    app.include_router(sessions.router)
+    @app.exception_handler(DailyCapReached)
+    async def cap_reached(_: Request, exc: DailyCapReached) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"error": exc.user_message})
+
+    for module in (health, auth, users, cv, sessions, admin):
+        app.include_router(module.router)
     return app
 
 

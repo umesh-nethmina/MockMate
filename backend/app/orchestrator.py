@@ -1,5 +1,6 @@
-"""Orchestrator: deterministic session state machine. It routes each turn to the right agent,
-enforces question limits (FR-14) and saves state after every turn (NFR-12). It never calls Claude itself."""
+"""Orchestrator: deterministic session state machine. It plans each turn (round, difficulty, follow-up
+and CV-question rules), routes it to the right agent, enforces question limits (FR-14) and saves state
+after every turn (NFR-12). It never calls Claude itself."""
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +14,15 @@ from app import db as database
 from app.agents import evaluator, interviewer
 from app.agents.context import InterviewContext
 from app.agents.evaluator import AnswerScore, ScoredItem
-from app.agents.interviewer import InterviewerTurn, Turn
+from app.agents.interviewer import (
+    MAX_FOLLOW_UPS_PER_TOPIC,
+    CvDue,
+    Difficulty,
+    InterviewerTurn,
+    Round,
+    Turn,
+    TurnPlan,
+)
 from app.llm import LLM, LLMError, LLMResult, LLMUsage
 from app.models import Evaluation, InterviewSession, LlmCall, Message, Report
 
@@ -23,16 +32,90 @@ CLOSING_TEXT = "That's the end of our interview - thank you for your time! I'm p
 INTERVIEWER_KINDS = {"follow_up": "follow_up", "next_topic": "question", "redirect": "redirect"}
 EVAL_WORKERS = 4
 NO_ANSWERS_TEXT = "No answers were given, so there is nothing to score yet. Start a new interview to get feedback."
+DIFFICULTIES: list[Difficulty] = ["easy", "medium", "hard"]
+HR_SHARE_OF_FULL_INTERVIEW = 3 / 8
+CV_QUESTION_BY = 3  # FR-13: ask about a CV project no later than question 3
 
 
 class SessionStateError(Exception):
     """The request does not fit the session's current state (HTTP 409)."""
 
 
+# ---------- planning rules (pure functions, unit-tested) ----------
+
+def round_for(session_type: str, question_limit: int, number: int) -> Round:
+    """Round of question `number` (1-based). A full interview runs HR first, then technical (FR-07)."""
+    if session_type == "hr":
+        return "hr"
+    if session_type == "technical":
+        return "technical"
+    hr_count = max(1, round(question_limit * HR_SHARE_OF_FULL_INTERVIEW))
+    return "hr" if number <= hr_count else "technical"
+
+
+def adjust_difficulty(current: str, qualities: list[str | None]) -> Difficulty:
+    """FR-12: one level harder after a strong answer, one level easier after two weak answers in a row."""
+    i = DIFFICULTIES.index(current) if current in DIFFICULTIES else 1
+    if qualities and qualities[-1] == "strong":
+        i = min(i + 1, len(DIFFICULTIES) - 1)
+    elif len(qualities) >= 2 and qualities[-1] == "weak" and qualities[-2] == "weak":
+        i = max(i - 1, 0)
+    return DIFFICULTIES[i]
+
+
+def follow_ups_on_current_topic(messages: list[Message]) -> int:
+    count = 0
+    for m in reversed(messages):
+        if m.speaker != "interviewer" or m.kind == "redirect":
+            continue
+        if m.kind == "follow_up":
+            count += 1
+        else:
+            break
+    return count
+
+
+def cv_due(session: InterviewSession, messages: list[Message], next_number: int) -> CvDue:
+    if not session.cv_text.strip():
+        return "no_cv"
+    if any(m.about_cv for m in messages if m.speaker == "interviewer"):
+        return "done"
+    if next_number >= min(CV_QUESTION_BY, session.question_limit):
+        return "now"
+    return "soon"
+
+
+def plan_next(session: InterviewSession, messages: list[Message]) -> TurnPlan:
+    number = session.questions_asked + 1
+    next_round = round_for(session.session_type, session.question_limit, number)
+    last_q = next((m for m in reversed(messages) if m.speaker == "interviewer" and m.kind != "redirect"), None)
+    round_changed = last_q is not None and last_q.round != next_round
+    follow_ups = follow_ups_on_current_topic(messages)
+    answers = [m for m in messages if m.kind == "answer"]
+    return TurnPlan(
+        questions_asked=session.questions_asked,
+        question_limit=session.question_limit,
+        round=next_round,
+        difficulty=session.difficulty if session.difficulty in DIFFICULTIES else "medium",  # type: ignore[arg-type]
+        follow_ups_on_topic=follow_ups,
+        follow_up_allowed=not round_changed and follow_ups < MAX_FOLLOW_UPS_PER_TOPIC,
+        round_changed=round_changed,
+        cv_due=cv_due(session, messages, number),
+        previous_quality=answers[-1].quality if answers else None,
+    )
+
+
 # ---------- helpers ----------
 
 def context_of(session: InterviewSession) -> InterviewContext:
-    return InterviewContext(session.role, session.level, session.job_description)
+    return InterviewContext(
+        role=session.role,
+        level=session.level,
+        job_description=session.job_description,
+        cv_text=session.cv_text,
+        personality=session.personality,
+        session_type=session.session_type,
+    )
 
 
 def record_usage(db: Session, session_id: str | None, usage: LLMUsage, ok: bool = True) -> None:
@@ -66,31 +149,20 @@ def _record_failure(db: Session, session_id: str | None, err: LLMError) -> None:
     db.commit()
 
 
-def _interviewer_message(turn: InterviewerTurn) -> Message:
+def _interviewer_message(turn: InterviewerTurn, plan: TurnPlan, has_cv: bool) -> Message:
     return Message(
         speaker="interviewer",
         kind=INTERVIEWER_KINDS[turn.decision],
-        round=turn.round,
+        round=plan.round,
         topic=turn.topic[:100],
         difficulty=turn.difficulty,
+        about_cv=turn.about_cv_project and has_cv,
         text=turn.question.strip(),
     )
 
 
 def _transcript(messages: list[Message]) -> list[Turn]:
     return [Turn(m.speaker, m.text) for m in messages if m.kind != "closing"]  # type: ignore[arg-type]
-
-
-def follow_ups_on_current_topic(messages: list[Message]) -> int:
-    count = 0
-    for m in reversed(messages):
-        if m.speaker != "interviewer" or m.kind == "redirect":
-            continue
-        if m.kind == "follow_up":
-            count += 1
-        else:
-            break
-    return count
 
 
 def question_for(session: InterviewSession, answer: Message) -> Message:
@@ -104,23 +176,37 @@ def start_session(
     db: Session,
     llm: LLM,
     *,
+    user_id: int | None,
     role: str,
     level: str,
     job_description: str,
     question_limit: int,
+    session_type: str = "full",
+    personality: str = "friendly_hr",
+    cv_id: int | None = None,
+    cv_text: str = "",
 ) -> tuple[InterviewSession, Message]:
     session = InterviewSession(
-        role=role, level=level, job_description=job_description, question_limit=question_limit
+        user_id=user_id,
+        role=role,
+        level=level,
+        job_description=job_description,
+        question_limit=question_limit,
+        session_type=session_type,
+        personality=personality,
+        cv_id=cv_id,
+        cv_text=cv_text,
+        difficulty="medium",
+        questions_asked=0,
     )
+    plan = plan_next(session, [])
     try:
-        result = interviewer.next_turn(
-            llm, context_of(session), [], questions_asked=0, question_limit=question_limit, follow_ups_on_topic=0
-        )
+        result = interviewer.next_turn(llm, context_of(session), [], plan)
     except LLMError as err:
         _record_failure(db, None, err)
         raise
 
-    first = _interviewer_message(result.output)
+    first = _interviewer_message(result.output, plan, bool(cv_text.strip()))
     first.kind = "question"  # the opening is always a new question
     session.messages.append(first)
     session.questions_asked = 1
@@ -151,24 +237,26 @@ def submit_answer(db: Session, llm: LLM, session: InterviewSession, text: str) -
         db.commit()
         return closing, True, answer.id
 
+    plan = plan_next(session, history)
     try:
         result: LLMResult[InterviewerTurn] = interviewer.next_turn(
-            llm,
-            context_of(session),
-            _transcript(history) + [Turn("candidate", text)],
-            questions_asked=session.questions_asked,
-            question_limit=session.question_limit,
-            follow_ups_on_topic=follow_ups_on_current_topic(history),
+            llm, context_of(session), _transcript(history) + [Turn("candidate", text)], plan
         )
     except LLMError as err:
         db.rollback()
         _record_failure(db, session.id, err)
         raise
 
-    reply = _interviewer_message(result.output)
+    turn = result.output
+    reply = _interviewer_message(turn, plan, bool(session.cv_text.strip()))
     if reply.kind == "redirect":
         answer.kind = "off_topic"
+        reply.round, reply.topic = asked_last.round, asked_last.topic  # restates the current question
     else:
+        quality = turn.previous_answer_quality if turn.previous_answer_quality != "none" else None
+        answer.quality = quality
+        previous = [m.quality for m in history if m.kind == "answer"]
+        session.difficulty = adjust_difficulty(session.difficulty, previous + [quality])
         session.questions_asked += 1
     session.messages.append(answer)
     session.messages.append(reply)
@@ -193,6 +281,7 @@ def _store_evaluation(
                     correctness=score.correctness,
                     clarity=score.clarity,
                     depth=score.depth,
+                    star_flags=score.star.model_dump() if answer.round == "hr" else None,  # FR-42
                     feedback=score.feedback,
                     model_answer=score.model_answer,
                 )
@@ -215,7 +304,7 @@ def evaluate_in_background(llm: LLM, session_id: str, answer_id: int) -> None:
             return
         question = question_for(session, answer)
         try:
-            result = evaluator.score_answer(llm, context_of(session), question.text, answer.text)
+            result = evaluator.score_answer(llm, context_of(session), question.text, answer.text, answer.round)
         except LLMError as err:
             log.warning("background evaluation failed for message %s; will retry at end: %s", answer_id, err)
             _record_failure(db, session_id, err)
@@ -236,18 +325,18 @@ def end_session(db: Session, llm: LLM, session: InterviewSession) -> Report:
     ctx = context_of(session)
     answers = [m for m in session.messages if m.kind == "answer"]
     done_ids = {e.message_id for e in session.evaluations}
-    missing = [(a, question_for(session, a).text) for a in answers if a.id not in done_ids]
+    missing = [(a, question_for(session, a).text, a.text, a.round) for a in answers if a.id not in done_ids]
 
     if missing:
-        def work(item: tuple[Message, str]):
-            answer, question = item
+        def work(item: tuple[Message, str, str, str]):
+            answer, question, text, rnd = item
             try:
-                return answer, evaluator.score_answer(llm, ctx, question, answer.text)
+                return answer, evaluator.score_answer(llm, ctx, question, text, rnd)
             except LLMError as err:
                 return answer, err
 
         with ThreadPoolExecutor(max_workers=EVAL_WORKERS) as pool:
-            outcomes = list(pool.map(work, [(a, q) for a, q in missing]))  # LLM calls only; DB stays on this thread
+            outcomes = list(pool.map(work, missing))  # LLM calls only; DB work stays on this thread
 
         first_error: LLMError | None = None
         for answer, outcome in outcomes:
@@ -261,16 +350,16 @@ def end_session(db: Session, llm: LLM, session: InterviewSession) -> Report:
         db.refresh(session)
 
     evaluations = list(session.evaluations)
+    by_id = {m.id: m for m in session.messages}
     if not evaluations:
         report = Report(
-            session_id=session.id,
-            overall_score=0.0,
-            strengths=[],
-            weaknesses=[],
-            recommendation=NO_ANSWERS_TEXT,
+            session_id=session.id, overall_score=0.0, strengths=[], weaknesses=[], recommendation=NO_ANSWERS_TEXT
         )
     else:
-        items = [ScoredItem(e.topic or "", e.correctness, e.clarity, e.depth, e.feedback) for e in evaluations]
+        items = [
+            ScoredItem(e.topic or "", by_id[e.message_id].round, e.correctness, e.clarity, e.depth, e.feedback)
+            for e in evaluations
+        ]
         try:
             result = evaluator.summarize(llm, ctx, items)
         except LLMError as err:
