@@ -10,7 +10,9 @@ AI mock-interview web app. Spec: SRS v1.0 (FR-/NFR- IDs). Build plan and progres
 - Backend venv: `backend/.venv` (built from the python.org CPython, NOT the MSYS2 python on PATH, which can't install wheels).
 - Backend tests: `cd backend && .venv/Scripts/python -m pytest --cov`
 - Backend lint: `cd backend && .venv/Scripts/ruff check app tests`
-- Backend dev server: `cd backend && .venv/Scripts/uvicorn app.main:app --reload`
+- Backend dev server: `cd backend && .venv/Scripts/uvicorn app.main:app --reload` (runs Alembic migrations on start-up)
+- Demo mode without an API key: set `USE_FAKE_LLM=true` in `backend/.env` (canned questions and scores, no cost)
+- New migration: `cd backend && .venv/Scripts/alembic revision --autogenerate -m "..."`
 - Frontend dev: `cd frontend && npm run dev` (http://localhost:5173)
 - Whole stack: `docker compose up --build`
 

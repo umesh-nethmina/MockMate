@@ -1,24 +1,31 @@
-import { useEffect, useState } from "react";
-import { api } from "./api";
-
-type Health = { status: string; environment: string };
+import { Link, Route, Routes } from "react-router-dom";
+import SetupPage from "./pages/SetupPage";
+import InterviewPage from "./pages/InterviewPage";
+import ReportPage from "./pages/ReportPage";
 
 export default function App() {
-  const [health, setHealth] = useState<string>("checking…");
-
-  useEffect(() => {
-    api<Health>("/health")
-      .then((h) => setHealth(`${h.status} (${h.environment})`))
-      .catch((e: Error) => setHealth(`unreachable: ${e.message}`));
-  }, []);
-
   return (
-    <main className="container">
-      <h1>MockMate</h1>
-      <p className="muted">AI mock interviews with scored feedback.</p>
-      <p>
-        API: <strong>{health}</strong>
-      </p>
-    </main>
+    <>
+      <header className="topbar">
+        <Link to="/" className="brand">
+          MockMate
+        </Link>
+      </header>
+      <main className="container">
+        <Routes>
+          <Route path="/" element={<SetupPage />} />
+          <Route path="/interview/:id" element={<InterviewPage />} />
+          <Route path="/report/:id" element={<ReportPage />} />
+          <Route
+            path="*"
+            element={
+              <p>
+                Page not found. <Link to="/">Start an interview</Link>
+              </p>
+            }
+          />
+        </Routes>
+      </main>
+    </>
   );
 }

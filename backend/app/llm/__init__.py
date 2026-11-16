@@ -9,4 +9,9 @@ __all__ = ["LLM", "LLMClient", "LLMError", "LLMRefusalError", "LLMResult", "LLMU
 @lru_cache
 def get_llm() -> LLM:
     """FastAPI dependency; tests override it with a fake."""
-    return LLMClient(get_settings())
+    settings = get_settings()
+    if settings.use_fake_llm:
+        from app.llm.fake import DemoLLM
+
+        return DemoLLM()
+    return LLMClient(settings)

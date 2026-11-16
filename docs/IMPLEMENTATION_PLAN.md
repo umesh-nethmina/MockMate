@@ -16,7 +16,7 @@ Tick items as they land. Requirement IDs (FR/NFR) link back to the SRS.
 | LLM client | One wrapper (`app/llm/client.py`) that logs tokens/latency/cost per call and retries 2× | NFR-11, NFR-18, FR-61. All tests mock this wrapper (NFR-16). |
 | DB | SQLAlchemy 2.0 + Alembic; SQLite in dev, Postgres in prod via `DATABASE_URL` | §2.4. |
 | Streaming | Server-Sent Events for the next question | NFR-01 "starts appearing within 3 s". Added in Phase 1.5 after the non-streamed flow works. |
-| Frontend | Vite + React + TypeScript, Tailwind, React Router, TanStack Query | Fast to build; light/dark themes easy. |
+| Frontend | Vite + React + TypeScript, React Router, plain CSS with theme tokens | Few dependencies; light/dark via CSS variables. |
 
 ### Cost note (NFR-15: < US$0.30 per session)
 Opus 5.5 is $4 / $20 per MTok. A rough 8-question session (≈ 9 interviewer calls + 8 scoring calls + 1 report) lands around **$0.20–0.35**.
@@ -32,14 +32,14 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - **Exit:** health check runs locally (backend test passes, frontend shows "API: ok")
 
 ## Phase 1 – MVP text interview (Weeks 1–2)
-1. [ ] DB models: Session, Message, Evaluation, Report (User nullable for now) + Alembic
-2. [ ] LLM wrapper: client, retries, usage logging, prompt loader, pricing table
-3. [ ] Interviewer agent + prompt (FR-10, FR-11, FR-16) with Pydantic output schema
-4. [ ] Orchestrator state machine (FR-14: default 8 questions, end early)
-5. [ ] Evaluator agent: per-answer score (FR-40), final report (FR-41)
-6. [ ] API: `POST /sessions`, `POST /sessions/{id}/answer`, `POST /sessions/{id}/end`, `GET /sessions/{id}/report`
-7. [ ] Frontend: Setup page (FR-03/04/05), Interview chat page, Report page
-8. [ ] SSE streaming for the next question (NFR-01)
+1. [x] DB models: Session, Message, Evaluation, Report (User nullable for now) + Alembic
+2. [x] LLM wrapper: client, retries, usage logging, prompt loader, pricing table
+3. [x] Interviewer agent + prompt (FR-10, FR-11, FR-16) with Pydantic output schema
+4. [x] Orchestrator state machine (FR-14: default 8 questions, end early)
+5. [x] Evaluator agent: per-answer score (FR-40), final report (FR-41)
+6. [x] API: `POST /sessions`, `POST /sessions/{id}/answer`, `POST /sessions/{id}/end`, `GET /sessions/{id}/report`
+7. [x] Frontend: Setup page (FR-03/04/05), Interview chat page, Report page
+8. [ ] SSE streaming for the next question (NFR-01) — measure real latency with an API key first; stream only if p95 > 3 s
 - **Exit:** one complete 8-question interview with report; cost per session logged
 
 ## Phase 2 – Personalisation (Week 3)

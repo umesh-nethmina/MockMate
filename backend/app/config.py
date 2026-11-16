@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     report_effort: str = "low"
     # Server-side refusal fallback (Claude API only; turn off for Bedrock/Vertex/Foundry).
     llm_fallbacks: bool = True
+    # Local dev only: canned interviewer/evaluator, no API key and no cost.
+    use_fake_llm: bool = False
     database_url: str = "sqlite:///./mockmate.db"
     cors_origins: list[str] = ["http://localhost:5173"]
 

@@ -36,3 +36,25 @@ def test_scores_are_clamped(fake_llm):
 def test_all_prompts_exist():
     for name in ("interviewer.v1", "evaluator.v1", "report.v1"):
         assert len(load_prompt(name)) > 200
+
+
+def test_demo_llm_runs_a_full_interview(engine):
+    from fastapi.testclient import TestClient
+
+    from app.llm import get_llm
+    from app.llm.fake import DemoLLM
+    from app.main import app
+
+    app.dependency_overrides[get_llm] = DemoLLM
+    try:
+        c = TestClient(app)
+        sid = c.post("/sessions", json={"role": "QA engineer", "level": "intern", "question_limit": 2}).json()[
+            "session_id"
+        ]
+        c.post(f"/sessions/{sid}/answer", json={"text": "A short answer"})
+        c.post(f"/sessions/{sid}/answer", json={"text": "Another answer " * 20})
+        report = c.post(f"/sessions/{sid}/end").json()
+        assert len(report["questions"]) == 2
+        assert "Demo mode" in report["summary"]
+    finally:
+        app.dependency_overrides.clear()
