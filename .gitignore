@@ -25,3 +25,6 @@ dist/
 Thumbs.db
 uvicorn.log
 vite.log
+
+# Eval runs (may contain model output; re-run to reproduce)
+backend/evals/results/

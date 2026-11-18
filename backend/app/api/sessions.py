@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -15,6 +16,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.llm import LLM, LLMError, get_llm
 from app.models import CV, InterviewSession, User
+from app.tools import pdf_report
 from app.tools.sandbox import Sandbox, get_sandbox
 from app.tools.speech_metrics import pace_label, word_count
 from app.usage import check_daily_cap
@@ -367,6 +369,20 @@ def get_report(session: InterviewSession = Depends(get_owned_session)) -> Report
     if session.report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not ready - end the session first")
     return _report_out(session)
+
+
+@router.get("/{session_id}/report.pdf")
+def report_pdf(session: InterviewSession = Depends(get_owned_session)) -> Response:
+    """FR-45: the report as a downloadable PDF."""
+    if session.report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not ready - end the session first")
+    report = _report_out(session)
+    name = re.sub(r"[^A-Za-z0-9]+", "-", session.role).strip("-").lower() or "interview"
+    return Response(
+        pdf_report.render(report),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="mockmate-{name}-{report.created_at:%Y%m%d}.pdf"'},
+    )
 
 
 @router.post("/{session_id}/study-plan")

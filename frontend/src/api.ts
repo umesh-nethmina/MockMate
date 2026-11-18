@@ -41,6 +41,31 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/** Download an authenticated file (PDF report, data export) and hand it to the browser to save. */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const headers: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, { headers });
+  } catch {
+    throw new ApiError("Cannot reach the MockMate server. Check your connection and try again.", 0);
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) onUnauthorized?.();
+    throw new ApiError(body.error ?? `Download failed (${res.status})`, res.status);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // ---------- types ----------
 
 export type Level = "intern" | "junior" | "mid";

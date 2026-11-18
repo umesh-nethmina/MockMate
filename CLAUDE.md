@@ -8,13 +8,15 @@ AI mock-interview web app. Spec: SRS v1.0 (FR-/NFR- IDs). Build plan and progres
 
 ## Commands
 - Backend venv: `backend/.venv` (built from the python.org CPython, NOT the MSYS2 python on PATH, which can't install wheels).
-- Backend tests: `cd backend && .venv/Scripts/python -m pytest --cov`
-- Backend lint: `cd backend && .venv/Scripts/ruff check app tests`
+- Backend tests: `cd backend && .venv/Scripts/python -m pytest --cov` (set `TEST_DATABASE_URL=postgresql://...` to run them on Postgres, as CI does)
+- Backend lint: `cd backend && .venv/Scripts/ruff check app tests evals`
 - Backend dev server: `cd backend && .venv/Scripts/uvicorn app.main:app --reload` (runs Alembic migrations on start-up)
 - Demo mode without an API key: set `USE_FAKE_LLM=true` in `backend/.env` (canned questions and scores, no cost)
 - New migration: `cd backend && .venv/Scripts/alembic revision --autogenerate -m "..."`
 - Frontend dev: `cd frontend && npm run dev` (http://localhost:5173)
 - Whole stack: `docker compose up --build` (coding round disabled there; see docker-compose.yml)
+- Evals (real API, costs money, never in tests): `cd backend && .venv/Scripts/python -m evals.run_evaluator_eval` (dry run; add `--yes` to run) and `-m evals.run_followup_review`
+- Deploy: `render.yaml` (backend + Postgres on Render), `frontend/vercel.json` (Vercel); see README
 - Coding round locally: Docker Desktop running; sandbox images `python:3.12-alpine` and `node:22-alpine` are pulled on start-up. Sandbox security tests in `tests/test_sandbox.py` run real containers and skip without Docker.
 
 ## Rules

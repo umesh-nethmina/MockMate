@@ -1,6 +1,15 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalise_database_url(url: str) -> str:
+    """Hosts such as Render hand out `postgres://...`; SQLAlchemy needs a dialect plus our driver (psycopg 3)."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
 
 
 class Settings(BaseSettings):
@@ -50,6 +59,11 @@ class Settings(BaseSettings):
     sandbox_max_concurrent: int = 4
     sandbox_queue_seconds: float = 15.0
     max_code_runs_per_session: int = 60
+
+    @field_validator("database_url")
+    @classmethod
+    def _db_url(cls, v: str) -> str:
+        return normalise_database_url(v)
 
 
 DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-change-me"

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { deleteAccount, deleteCv, listCvs, type CV } from "../api";
+import { deleteAccount, deleteCv, downloadFile, listCvs, type CV } from "../api";
 import { useAuth } from "../auth";
 
 export default function AccountPage() {
@@ -83,6 +83,25 @@ export default function AccountPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="card row spread">
+        <span>
+          <strong>Download your data</strong>
+          <br />
+          <span className="muted small">
+            Everything MockMate stores about you (account, CV text, interviews, scores, reports) as one JSON file.
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            downloadFile("/users/me/export", "mockmate-data.json").catch((e: Error) => setError(e.message));
+          }}
+        >
+          Export my data
+        </button>
       </section>
 
       <section className="card danger">

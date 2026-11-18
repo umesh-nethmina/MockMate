@@ -1,7 +1,9 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -93,6 +95,41 @@ def my_sessions(user: User = Depends(get_current_user), db: Session = Depends(ge
 def my_progress(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ProgressOut:
     """FR-51: score trend, weakest topics and per-dimension averages across the user's sessions."""
     return ProgressOut(**progress.progress(db, user.id))
+
+
+def _columns(obj, skip: tuple[str, ...] = ()) -> dict:
+    return {c.key: getattr(obj, c.key) for c in obj.__table__.columns if c.key not in skip}
+
+
+@router.get("/export")
+def export_my_data(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> JSONResponse:
+    """NFR-10: everything MockMate stores about the user, as one JSON file (no password hash)."""
+    sessions = db.scalars(
+        select(InterviewSession)
+        .where(InterviewSession.user_id == user.id)
+        .order_by(InterviewSession.started_at)
+    )
+    data = {
+        "exported_at": datetime.now(UTC),
+        "format": "mockmate-export-v1",
+        "account": _columns(user, skip=("password_hash",)),
+        "cvs": [_columns(cv, skip=("user_id",)) for cv in user.cvs],
+        "sessions": [
+            {
+                **_columns(s, skip=("user_id",)),
+                "messages": [_columns(m, skip=("session_id",)) for m in s.messages],
+                "evaluations": [_columns(e, skip=("session_id",)) for e in s.evaluations],
+                "code_runs": [_columns(r, skip=("session_id",)) for r in s.code_runs],
+                "report": _columns(s.report, skip=("session_id",)) if s.report else None,
+            }
+            for s in sessions
+        ],
+    }
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    return JSONResponse(
+        jsonable_encoder(data),
+        headers={"Content-Disposition": f'attachment; filename="mockmate-data-{stamp}.json"'},
+    )
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

@@ -28,7 +28,7 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - [x] FastAPI skeleton with settings, CORS, `{"error": ...}` error format, `GET /health`
 - [x] pytest + coverage config, first test
 - [x] Vite React TS skeleton that calls `/health`
-- [ ] Dockerfiles + `docker compose up` (NFR-19) — files written, not yet verified (Docker Desktop was not running)
+- [x] Dockerfiles + `docker compose up` (NFR-19) — verified in Phase 6 (fixed: non-root user could not create the SQLite file)
 - **Exit:** health check runs locally (backend test passes, frontend shows "API: ok")
 
 ## Phase 1 – MVP text interview (Weeks 1–2)
@@ -77,8 +77,12 @@ compact per-turn context. We measure real cost per session from Phase 1 and deci
 - Notes: topics are free-text labels from the interviewer, matched loosely (word stems, order, plurals); very different wordings of the same subject still count as separate topics. Panel mode adds one Claude call per session; the study plan adds one when requested.
 
 ## Phase 6 – Release (Week 8)
-- [ ] 30-answer eval set for evaluator (±1 on 80%) and follow-up relevance review
-- [ ] PDF report download (FR-45), data export (NFR-10)
-- [ ] CI (GitHub Actions: lint, tests, coverage ≥ 70%), secret scan
-- [ ] Deploy: Render (backend + Postgres), Vercel (frontend); README + demo video
+- [x] 30-answer eval set (`backend/evals/evaluator_set.jsonl`) + runner (±1 on every dimension for ≥ 80%) and a 10-case follow-up relevance review that writes a checklist. **Not run yet**: needs an API key (≈ $0.60 + $0.15), and the draft reference scores should be reviewed by a second person first
+- [x] PDF report download (FR-45, fpdf2 + bundled DejaVu fonts for Unicode), data export as one JSON file (NFR-10)
+- [x] CI (GitHub Actions): backend lint + tests on Postgres with real sandbox containers + coverage ≥ 70%; frontend lint/type-check/build; gitleaks secret scan (history scanned locally: no leaks)
+- [x] Postgres support (psycopg 3, `postgres://` URLs normalised); full suite and the migration chain verified on Postgres 16
+- [x] Deploy config: `render.yaml` (backend + Postgres, secrets entered in the dashboard), `frontend/vercel.json` (SPA rewrites, security headers); Dockerfile honours `$PORT`
+- [x] README
+- [ ] Actually deploy (needs the user's Render/Vercel accounts and API key) and record the demo video
+- [ ] Sandbox host for the coding round in production (Render can't run containers)
 - **Exit:** all acceptance criteria in SRS §9.1 met

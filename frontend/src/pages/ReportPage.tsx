@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { createStudyPlan, getReport, type Delivery, type PanelVerdict, type Report, type StudyPlan } from "../api";
+import { createStudyPlan, downloadFile, getReport, type Delivery, type PanelVerdict, type Report, type StudyPlan } from "../api";
 
 function scoreClass(score: number) {
   if (score >= 7) return "good";
@@ -126,6 +126,7 @@ export default function ReportPage() {
   const { id = "" } = useParams();
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
 
@@ -303,6 +304,22 @@ export default function ReportPage() {
         <Link className="button primary" to="/">
           Start another interview
         </Link>
+        <button
+          type="button"
+          onClick={() => {
+            setPdfError(null);
+            downloadFile(`/sessions/${id}/report.pdf`, "mockmate-report.pdf").catch((e: Error) =>
+              setPdfError(e.message),
+            );
+          }}
+        >
+          Download PDF
+        </button>
+        {pdfError && (
+          <span className="error small" role="alert">
+            {pdfError}
+          </span>
+        )}
         <span className="muted small">
           {report.total_tokens.toLocaleString()} tokens · ${report.cost_usd.toFixed(3)}
         </span>

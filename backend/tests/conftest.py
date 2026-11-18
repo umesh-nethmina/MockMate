@@ -1,8 +1,11 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app import db as database
 from app.agents.interviewer import InterviewerTurn
+from app.config import normalise_database_url
 from app.db import Base, configure_database
 from app.llm import get_llm
 from app.llm.fake import FakeLLM
@@ -14,7 +17,9 @@ PASSWORD = "s3cret-pass"
 
 @pytest.fixture
 def engine():
-    eng = configure_database("sqlite://")
+    """In-memory SQLite by default; set TEST_DATABASE_URL to run the whole suite on Postgres (CI does)."""
+    eng = configure_database(normalise_database_url(os.environ.get("TEST_DATABASE_URL", "sqlite://")))
+    Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)
